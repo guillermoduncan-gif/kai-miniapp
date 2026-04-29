@@ -29,8 +29,8 @@ function isTranslateCommand(text: string): boolean {
 
 function isTranslateModeToggle(text: string): { toggle: boolean; on: boolean } {
   const t = text.toLowerCase();
-  if (t.includes('translation mode on') || t.includes('start translating')) return { toggle: true, on: true };
-  if (t.includes('translation mode off') || t.includes('stop translating')) return { toggle: true, on: false };
+  if (t.includes('translation on') || t.includes('translate on') || t.includes('start translating')) return { toggle: true, on: true };
+  if (t.includes('translation off') || t.includes('translate off') || t.includes('stop translating')) return { toggle: true, on: false };
   return { toggle: false, on: false };
 }
 
