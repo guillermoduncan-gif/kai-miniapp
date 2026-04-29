@@ -1,6 +1,7 @@
 /**
  * kai-client.ts
- * Handles all communication with your KAI Cloud API on Railway.
+ * Handles all communication with KAI Cloud API on Railway.
+ * Phase 4: Added translation support
  */
 
 const KAI_API_URL = process.env.KAI_API_URL || 'https://kai-cloud-production.up.railway.app';
@@ -11,83 +12,93 @@ export interface KaiResponse {
   text?: string;
   session_id?: string;
   speaker_key?: string;
+  lang?: string;
 }
 
-/**
- * Send a text turn to KAI and get a response.
- * Uses /process — the same endpoint that works in Phase 1.
- */
+export interface TranslationResponse {
+  original: string;
+  translation: string;
+  detected_language: string;
+  target_language: string;
+  is_same_language: boolean;
+}
+
+export interface DetectResponse {
+  language: string;
+  language_code: string;
+  confidence: string;
+}
+
+const headers = {
+  'Content-Type': 'application/json',
+  'x-api-key': KAI_API_KEY,
+};
+
 export async function callKaiAPI(
   userText: string,
   sessionId: string,
   userId: string
 ): Promise<KaiResponse> {
-
-  const url = `${KAI_API_URL}/process`;
-
-  const body = {
-    text: userText,
-    session_id: sessionId,
-    speaker_key: userIdToSpeakerKey(userId),
-  };
-
-  const res = await fetch(url, {
+  const res = await fetch(`${KAI_API_URL}/process`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': KAI_API_KEY,
-    },
-    body: JSON.stringify(body),
+    headers,
+    body: JSON.stringify({
+      text: userText,
+      session_id: sessionId,
+      speaker_key: userIdToSpeakerKey(userId),
+    }),
   });
-
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`KAI API error ${res.status}: ${errorText}`);
   }
-
   return res.json() as Promise<KaiResponse>;
 }
 
-/**
- * Get memories for a speaker from KAI Cloud.
- */
-export async function getMemories(speakerKey: string): Promise<any[]> {
-  const url = `${KAI_API_URL}/memory/${speakerKey}`;
-  const res = await fetch(url, {
-    headers: { 'x-api-key': KAI_API_KEY },
+export async function translateText(
+  text: string,
+  targetLang: string,
+  speakerKey: string = 'guille'
+): Promise<TranslationResponse> {
+  const res = await fetch(`${KAI_API_URL}/translate/`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ text, target_lang: targetLang, speaker_key: speakerKey }),
   });
+  if (!res.ok) throw new Error(`Translation error ${res.status}`);
+  return res.json() as Promise<TranslationResponse>;
+}
+
+export async function detectLanguage(text: string): Promise<DetectResponse> {
+  const res = await fetch(`${KAI_API_URL}/translate/detect`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error('Language detection failed');
+  return res.json() as Promise<DetectResponse>;
+}
+
+export async function getMemories(speakerKey: string): Promise<any[]> {
+  const res = await fetch(`${KAI_API_URL}/memory/${speakerKey}`, { headers });
   if (!res.ok) return [];
   const data = await res.json() as { memories: any[] };
   return data.memories || [];
 }
 
-/**
- * Save a memory for a speaker to KAI Cloud.
- */
 export async function saveMemory(
   speakerKey: string,
   content: string,
   category = 'general'
 ): Promise<void> {
-  const url = `${KAI_API_URL}/memory/${speakerKey}`;
-  await fetch(url, {
+  await fetch(`${KAI_API_URL}/memory/${speakerKey}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': KAI_API_KEY,
-    },
+    headers,
     body: JSON.stringify({ content, category }),
   });
 }
 
-/**
- * Convert Mentra userId to KAI speaker_key.
- * For now maps to 'guille' — expand this for multi-user later.
- */
-function userIdToSpeakerKey(userId: string): string {
-  const userMap: Record<string, string> = {
-    // Add entries as you add more users
-    // 'mentra-user-id-here': 'guille',
-  };
+export function userIdToSpeakerKey(userId: string): string {
+  const userMap: Record<string, string> = {};
   return userMap[userId] || 'guille';
 }
