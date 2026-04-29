@@ -12,10 +12,8 @@ const USER_LANG_CODE = process.env.USER_LANG_CODE || 'en';
 const KAI_API_URL = process.env.KAI_API_URL || 'https://kai-cloud-production.up.railway.app';
 const KAI_API_KEY_VAL = process.env.KAI_API_KEY || 'kai-secret-guille-2026';
 
-// Load webview HTML from static file
 const WEBVIEW_HTML = fs.readFileSync(path.join(__dirname, '..', 'webview.html'), 'utf-8');
 
-// SSE clients
 const sseClients = new Set<any>();
 function broadcast(event: string, data: object) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -24,7 +22,6 @@ function broadcast(event: string, data: object) {
 
 const translationModeMap = new Map<string, boolean>();
 
-// Intent detection
 type Intent =
   | { type: 'toggle_translation'; on: boolean }
   | { type: 'translate'; text: string }
@@ -33,28 +30,21 @@ type Intent =
 
 function getIntent(text: string): Intent {
   const t = text.toLowerCase().trim();
-
   if (/^(kai\s+)?(translation|translate)\s+on$/.test(t) || t.includes('translation mode on') || t.includes('start translating'))
     return { type: 'toggle_translation', on: true };
   if (/^(kai\s+)?(translation|translate)\s+off$/.test(t) || t.includes('translation mode off') || t.includes('stop translating'))
     return { type: 'toggle_translation', on: false };
-
   const phoneMatch = t.match(/^(?:kai\s+)?call\s+(.+?)(?:\s+on\s+(?:phone|regular))?$/);
   if (phoneMatch && !t.includes('whatsapp') && !t.includes('facetime'))
     return { type: 'call', name: phoneMatch[1].trim(), app: 'phone' };
-
-  const waMatch = t.match(/^(?:kai\s+)?(?:whatsapp|whats app|message)\s+(.+?)(?:\s+on\s+whatsapp)?$/);
+  const waMatch = t.match(/^(?:kai\s+)?(?:whatsapp|whats app|message)\s+(.+?)$/);
   if (waMatch) return { type: 'call', name: waMatch[1].trim(), app: 'whatsapp' };
-
   const ftMatch = t.match(/^(?:kai\s+)?facetime\s+(.+?)$/);
   if (ftMatch) return { type: 'call', name: ftMatch[1].trim(), app: 'facetime' };
-
   const appCallMatch = t.match(/^(?:kai\s+)?call\s+(.+?)\s+on\s+(whatsapp|facetime)$/);
   if (appCallMatch) return { type: 'call', name: appCallMatch[1].trim(), app: appCallMatch[2] as any };
-
-  if (/^(kai\s+)?translate\s+\S+/i.test(t) || /^traducir\s+\S+/i.test(t))
-    return { type: 'translate', text: t.replace(/^(kai\s+)?translate\s+/i, '').replace(/^traducir\s+/i, '') };
-
+  if (/^(kai\s+)?translate\s+\S+/i.test(t))
+    return { type: 'translate', text: t.replace(/^(kai\s+)?translate\s+/i, '') };
   return { type: 'normal' };
 }
 
@@ -63,6 +53,7 @@ class KaiApp extends AppServer {
     super({ packageName: PACKAGE_NAME, apiKey: MENTRA_API_KEY, port: PORT });
     const expressApp = (this as any).app;
 
+    // SSE
     expressApp.get('/events', (req: any, res: any) => {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -75,7 +66,7 @@ class KaiApp extends AppServer {
       req.on('close', () => sseClients.delete(res));
     });
 
-    // Contacts proxy
+    // Contacts proxy — GET list
     expressApp.get('/api/contacts', async (_req: any, res: any) => {
       try {
         const r = await fetch(`${KAI_API_URL}/contacts/guille`, { headers: { 'x-api-key': KAI_API_KEY_VAL } });
@@ -83,21 +74,7 @@ class KaiApp extends AppServer {
       } catch { res.json({ contacts: [] }); }
     });
 
-    expressApp.post('/api/contacts', async (req: any, res: any) => {
-      let body = '';
-      req.on('data', (chunk: any) => body += chunk);
-      req.on('end', async () => {
-        try {
-          const r = await fetch(`${KAI_API_URL}/contacts/guille`, {
-            method: 'POST',
-            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
-            body
-          });
-          res.status(r.status).json(await r.json());
-        } catch { res.status(500).json({ error: 'Failed' }); }
-      });
-    });
-
+    // Contacts proxy — DELETE
     expressApp.delete('/api/contacts/:id', async (req: any, res: any) => {
       try {
         await fetch(`${KAI_API_URL}/contacts/guille/${req.params.id}`, {
@@ -105,6 +82,27 @@ class KaiApp extends AppServer {
         });
         res.json({ status: 'deleted' });
       } catch { res.status(500).json({ error: 'Failed' }); }
+    });
+
+    // Contacts proxy — vCard SYNC (multipart passthrough)
+    expressApp.post('/api/contacts/sync', async (req: any, res: any) => {
+      try {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        req.on('end', async () => {
+          const body = Buffer.concat(chunks);
+          const r = await fetch(`${KAI_API_URL}/contacts/guille/sync`, {
+            method: 'POST',
+            headers: {
+              'x-api-key': KAI_API_KEY_VAL,
+              'content-type': req.headers['content-type'],
+              'content-length': body.length.toString(),
+            },
+            body,
+          });
+          res.status(r.status).json(await r.json());
+        });
+      } catch { res.status(500).json({ error: 'Sync failed' }); }
     });
 
     expressApp.get('/webview', (_req: any, res: any) => res.send(WEBVIEW_HTML));
