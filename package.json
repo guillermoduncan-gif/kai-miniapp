@@ -1,0 +1,25 @@
+{
+  "name": "kai-miniapp",
+  "version": "1.0.0",
+  "description": "KAI Voice AI MiniApp for Mentra smart glasses",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "watch": "ts-node-dev --respawn src/index.ts"
+  },
+  "dependencies": {
+    "@mentra/sdk": "latest",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
