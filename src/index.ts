@@ -13,8 +13,6 @@ const DEFAULT_TARGET_LANG = process.env.TARGET_LANG || 'English';
 const USER_LANG_CODE = process.env.USER_LANG_CODE || 'en';
 const KAI_API_URL = process.env.KAI_API_URL || 'https://kai-cloud-production.up.railway.app';
 const KAI_API_KEY_VAL = process.env.KAI_API_KEY || 'kai-secret-guille-2026';
-const SERVER_URL = process.env.SERVER_URL || 'https://kai-miniapp-production.up.railway.app';
-
 const WEBVIEW_HTML = fs.readFileSync(path.join(__dirname, '..', 'webview.html'), 'utf-8');
 
 // SSE clients
@@ -169,8 +167,6 @@ class KaiApp extends AppServer {
       apiKey: MENTRA_API_KEY,
       port: PORT,
     } as any);
-    // Set serverUrl so onPhoneNotifications permission check passes
-    (this as any).config.serverUrl = SERVER_URL;
   }
 
   protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
