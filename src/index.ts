@@ -61,6 +61,10 @@ function getIntent(text: string): Intent {
     t.match(/^hacer una llamada a\s+(.+?)$/);
   if (phoneMatch) return { type: 'call', name: phoneMatch[1].trim(), app: 'phone' };
 
+  // Test incoming call simulation: "simulate call from [name]"
+  const testCallMatch = t.match(/^(?:simulate|test|fake)\s+(?:call|incoming)\s+(?:from\s+)?(.+)$/);
+  if (testCallMatch) return { type: 'test_call', name: testCallMatch[1].trim() } as any;
+
   // Translate
   if (/^translate\s+\S+/i.test(t))
     return { type: 'translate', text: t.replace(/^translate\s+/i, '') };
@@ -193,6 +197,17 @@ class KaiApp extends AppServer {
       console.log(`\n👤 "${userText}"`);
       const intent = getIntent(userText);
       console.log(`   → ${intent.type}`);
+
+      // Test incoming call simulation
+      if ((intent as any).type === 'test_call') {
+        const name = (intent as any).name || 'Unknown';
+        const msg = `📞 Incoming: ${name}`;
+        await session.layouts.showTextWall(msg);
+        broadcast('incoming_call', { caller: name, title: name, body: '' });
+        broadcast('reply', { text: msg });
+        setTimeout(() => session.layouts.showTextWall(''), 10000);
+        return;
+      }
 
       if (intent.type === 'toggle_translation') {
         translationModeMap.set(sessionId, intent.on);
