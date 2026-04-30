@@ -196,20 +196,23 @@ class KaiApp extends AppServer {
       console.log('⚠️ onPhoneNotifications not available:', e);
     }
 
-    session.events.onTranscription(async (data) => {
-      const userText = data.text?.trim();
+    const transcriptionHandler = async (data: any) => {
+      const userText = (data.text || '').trim();
       if (!userText || userText.length < 2) return;
       if (!data.isFinal) { session.layouts.showTextWall(`🎙️ "${userText}"`); return; }
 
       console.log(`\n👤 "${userText}"`);
 
-      // Ignore very short ambient noise transcriptions (single words under 4 chars)
-      // unless they are known commands
-      const wordCount = userText.trim().split(/\s+/).length;
-      const knownShortCommands = ['call', 'llama', 'translate', 'help'];
-      const isKnownCommand = knownShortCommands.some(cmd => userText.toLowerCase().startsWith(cmd));
-      if (wordCount === 1 && userText.length < 6 && !isKnownCommand) {
-        console.log(`   → Ignored (likely ambient noise: "${userText}")`);
+      // Ignore likely ambient noise — single short words that aren't commands
+      const words = userText.trim().split(/\s+/);
+      const wordCount = words.length;
+      const knownCommands = ['call', 'llama', 'llamar', 'translate', 'traducir',
+        'help', 'ayuda', 'facetime', 'whatsapp', 'translation', 'simulate'];
+      const isKnownCommand = knownCommands.some(cmd => userText.toLowerCase().startsWith(cmd));
+
+      // Ignore single words under 8 chars that aren't known commands
+      if (wordCount === 1 && userText.length < 8 && !isKnownCommand) {
+        console.log(`   → Ignored ambient: "${userText}"`);
         return;
       }
 
@@ -316,7 +319,23 @@ class KaiApp extends AppServer {
         broadcast('reply', { text: 'Connection error. Try again.' });
         broadcast('status', { state: 'ready' });
       }
-    });
+    };
+
+    // Register transcription — lock to Spanish+English to prevent mis-transcription
+    // onTranscription defaults to en-US which can mis-transcribe Spanish as other languages
+    try {
+      // Try to use language-specific transcription for Spanish
+      if ((session.events as any).onTranscriptionForLanguage) {
+        (session.events as any).onTranscriptionForLanguage('es-419', transcriptionHandler); // Latin American Spanish
+        (session.events as any).onTranscriptionForLanguage('en-US', transcriptionHandler);
+        console.log('✅ Language-specific transcription registered (es-419 + en-US)');
+      } else {
+        session.events.onTranscription(transcriptionHandler);
+        console.log('✅ Default transcription registered');
+      }
+    } catch (e) {
+      session.events.onTranscription(transcriptionHandler);
+    }
   }
 }
 
