@@ -165,41 +165,36 @@ class KaiApp extends AppServer {
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
 
-    // Log all available event methods so we know what the SDK supports
-    const eventMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(session.events))
-      .filter(m => m.startsWith('on'));
-    console.log('📋 Available event methods:', eventMethods.join(', '));
+    // onPhoneNotifications — confirmed available in this SDK version
+    try {
+      session.events.onPhoneNotifications((notification: any) => {
+        const title = String(notification?.title || notification?.appName || '');
+        const body = String(notification?.body || notification?.message || notification?.content || '');
+        const combined = (title + ' ' + body).toLowerCase();
+        console.log(`🔔 Phone notification: "${title}" — "${body}"`);
+        console.log(`🔔 Full notification:`, JSON.stringify(notification));
 
-    // Try all known notification event names
-    const notifHandlers = ['onNotification', 'onPhoneCall', 'onIncomingCall', 'onCallNotification'];
-    notifHandlers.forEach(handlerName => {
-      try {
-        const handler = (session.events as any)[handlerName];
-        if (typeof handler === 'function') {
-          handler.call(session.events, (notification: any) => {
-            const title = String(notification?.title || notification?.callerName || '');
-            const body = String(notification?.body || notification?.message || '');
-            const combined = (title + ' ' + body).toLowerCase();
-            console.log(`🔔 [${handlerName}] "${title}" — "${body}"`);
-            const isCall = combined.includes('incoming') || combined.includes('calling') ||
-              combined.includes('call from') || combined.includes('llamada') ||
-              combined.includes('entrante');
-            if (isCall || handlerName.includes('Call')) {
-              const caller = title || body || 'Unknown';
-              const msg = `📞 Incoming: ${caller}`;
-              session.layouts.showTextWall(msg);
-              broadcast('incoming_call', { caller, title, body });
-              broadcast('reply', { text: msg });
-              setTimeout(() => session.layouts.showTextWall(''), 15000);
-              console.log(`📞 Incoming call detected via ${handlerName}: ${caller}`);
-            }
-          });
-          console.log(`✅ Registered ${handlerName}`);
+        // Detect incoming calls from Phone, WhatsApp, FaceTime
+        const isCall = combined.includes('incoming') || combined.includes('calling') ||
+          combined.includes('call from') || combined.includes('llamada entrante') ||
+          combined.includes('entrante') || combined.includes('facetime') ||
+          title.toLowerCase().includes('phone') || title.toLowerCase().includes('whatsapp');
+
+        if (isCall) {
+          // Extract caller name — usually in title or body
+          const caller = body || title || 'Unknown';
+          const msg = `📞 Incoming: ${caller}`;
+          session.layouts.showTextWall(msg);
+          broadcast('incoming_call', { caller, title, body });
+          broadcast('reply', { text: msg });
+          setTimeout(() => session.layouts.showTextWall(''), 15000);
+          console.log(`📞 Incoming call: ${caller}`);
         }
-      } catch (e) {
-        // Handler not available
-      }
-    });
+      });
+      console.log('✅ onPhoneNotifications registered');
+    } catch (e) {
+      console.log('⚠️ onPhoneNotifications not available:', e);
+    }
 
     session.events.onTranscription(async (data) => {
       const userText = data.text?.trim();
@@ -207,6 +202,17 @@ class KaiApp extends AppServer {
       if (!data.isFinal) { session.layouts.showTextWall(`🎙️ "${userText}"`); return; }
 
       console.log(`\n👤 "${userText}"`);
+
+      // Ignore very short ambient noise transcriptions (single words under 4 chars)
+      // unless they are known commands
+      const wordCount = userText.trim().split(/\s+/).length;
+      const knownShortCommands = ['call', 'llama', 'translate', 'help'];
+      const isKnownCommand = knownShortCommands.some(cmd => userText.toLowerCase().startsWith(cmd));
+      if (wordCount === 1 && userText.length < 6 && !isKnownCommand) {
+        console.log(`   → Ignored (likely ambient noise: "${userText}")`);
+        return;
+      }
+
       const intent = getIntent(userText);
       console.log(`   → ${intent.type}`);
 
