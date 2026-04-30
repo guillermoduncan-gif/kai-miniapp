@@ -143,8 +143,6 @@ class KaiApp extends AppServer {
 
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
-      });
-    }
 
     session.events.onTranscription(async (data) => {
       const userText = data.text?.trim();
