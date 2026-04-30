@@ -383,6 +383,16 @@ function connect() {
   es.addEventListener('reply', e => { addMessage('kai', JSON.parse(e.data).text); setStatus('ready'); });
   es.addEventListener('translation', e => { const d = JSON.parse(e.data); addMessage('translation', d.translation, d.detected_language); setStatus('ready'); });
   es.addEventListener('call', e => { const d = JSON.parse(e.data); showCallOverlay(d.contact, d.app); setStatus('ready'); });
+  es.addEventListener('incoming_call', e => {
+    const d = JSON.parse(e.data);
+    // Show incoming call banner
+    hideEmpty(); removeThinking();
+    const msg = document.createElement('div');
+    msg.className = 'message kai';
+    msg.innerHTML = '<div class="message-label" style="color:rgba(240,192,64,0.6)">INCOMING CALL</div><div class="bubble" style="border-color:rgba(240,192,64,0.4);color:var(--gold)">📞 ' + esc(d.caller || d.title) + '</div>';
+    conv.appendChild(msg); scrollBottom();
+    setStatus('ready');
+  });
   es.addEventListener('status', e => {
     const d = JSON.parse(e.data);
     setStatus(d.state);

@@ -29,22 +29,35 @@ type Intent =
   | { type: 'normal' };
 
 function getIntent(text: string): Intent {
-  const t = text.toLowerCase().trim();
-  if (/^(kai\s+)?(translation|translate)\s+on$/.test(t) || t.includes('translation mode on') || t.includes('start translating'))
+  // Strip "Hey KAI", "OK KAI", "KAI" prefix
+  const t = text.toLowerCase().trim().replace(/^(hey\s+kai|ok\s+kai|kai)[,\s]+/, '').trim();
+
+  // Translation toggles
+  if (/^(translation|translate)\s+on$/.test(t) || t.includes('translation mode on') || t.includes('start translating'))
     return { type: 'toggle_translation', on: true };
-  if (/^(kai\s+)?(translation|translate)\s+off$/.test(t) || t.includes('translation mode off') || t.includes('stop translating'))
+  if (/^(translation|translate)\s+off$/.test(t) || t.includes('translation mode off') || t.includes('stop translating'))
     return { type: 'toggle_translation', on: false };
-  const phoneMatch = t.match(/^(?:kai\s+)?call\s+(.+?)(?:\s+on\s+(?:phone|regular))?$/);
-  if (phoneMatch && !t.includes('whatsapp') && !t.includes('facetime'))
-    return { type: 'call', name: phoneMatch[1].trim(), app: 'phone' };
-  const waMatch = t.match(/^(?:kai\s+)?(?:whatsapp|whats app|message)\s+(.+?)$/);
-  if (waMatch) return { type: 'call', name: waMatch[1].trim(), app: 'whatsapp' };
-  const ftMatch = t.match(/^(?:kai\s+)?facetime\s+(.+?)$/);
-  if (ftMatch) return { type: 'call', name: ftMatch[1].trim(), app: 'facetime' };
-  const appCallMatch = t.match(/^(?:kai\s+)?call\s+(.+?)\s+on\s+(whatsapp|facetime)$/);
+
+  // Call on specific app: "call [name] on whatsapp/facetime"
+  const appCallMatch = t.match(/^call\s+(.+?)\s+on\s+(whatsapp|facetime|phone)$/);
   if (appCallMatch) return { type: 'call', name: appCallMatch[1].trim(), app: appCallMatch[2] as any };
-  if (/^(kai\s+)?translate\s+\S+/i.test(t))
-    return { type: 'translate', text: t.replace(/^(kai\s+)?translate\s+/i, '') };
+
+  // WhatsApp
+  const waMatch = t.match(/^(?:whatsapp|whats app)\s+(.+?)$/) || t.match(/^(?:message|text)\s+(.+?)\s+on\s+whatsapp$/);
+  if (waMatch) return { type: 'call', name: waMatch[1].trim(), app: 'whatsapp' };
+
+  // FaceTime
+  const ftMatch = t.match(/^facetime\s+(.+?)$/);
+  if (ftMatch) return { type: 'call', name: ftMatch[1].trim(), app: 'facetime' };
+
+  // Phone call: "call [name]"
+  const phoneMatch = t.match(/^call\s+(.+?)(?:\s+on\s+(?:phone|regular))?$/);
+  if (phoneMatch) return { type: 'call', name: phoneMatch[1].trim(), app: 'phone' };
+
+  // Translate
+  if (/^translate\s+\S+/i.test(t))
+    return { type: 'translate', text: t.replace(/^translate\s+/i, '') };
+
   return { type: 'normal' };
 }
 
@@ -121,7 +134,7 @@ class KaiApp extends AppServer {
       await fetch(`${KAI_API_URL}/session/clear`, {
         method: 'POST',
         headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: userId }),
+        body: JSON.stringify({ session_id: sessionId }),
       });
       console.log('🧹 Redis session cleared');
     } catch (e) {
@@ -130,6 +143,24 @@ class KaiApp extends AppServer {
 
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
+
+    // Listen for incoming call notifications
+    if (session.events.onPhoneNotification) {
+      session.events.onPhoneNotification((notification: any) => {
+        const title = notification.title || '';
+        const body = notification.body || '';
+        // Detect incoming calls from Phone, WhatsApp, FaceTime
+        const isCall = /incoming|calling|call from/i.test(title + ' ' + body);
+        if (isCall) {
+          const caller = title.replace(/incoming call|calling/gi, '').trim() || body;
+          const msg = `📞 Incoming: ${caller}`;
+          session.layouts.showTextWall(msg);
+          broadcast('incoming_call', { caller, title, body });
+          setTimeout(() => session.layouts.showTextWall(''), 15000);
+          console.log(`📞 Incoming call detected: ${caller}`);
+        }
+      });
+    }
 
     session.events.onTranscription(async (data) => {
       const userText = data.text?.trim();
