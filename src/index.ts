@@ -155,7 +155,7 @@ class KaiApp extends AppServer {
       await fetch(`${KAI_API_URL}/session/clear`, {
         method: 'POST',
         headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: userId }),
+        body: JSON.stringify({ session_id: sessionId }),
       });
       console.log('🧹 Redis session cleared');
     } catch (e) {
@@ -165,29 +165,41 @@ class KaiApp extends AppServer {
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
 
-    // Listen for phone notifications (incoming calls, messages)
-    try {
-      (session.events as any).onNotification?.((notification: any) => {
-        const title = String(notification?.title || '');
-        const body = String(notification?.body || notification?.message || '');
-        const combined = (title + ' ' + body).toLowerCase();
-        console.log(`🔔 Notification: "${title}" — "${body}"`);
+    // Log all available event methods so we know what the SDK supports
+    const eventMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(session.events))
+      .filter(m => m.startsWith('on'));
+    console.log('📋 Available event methods:', eventMethods.join(', '));
 
-        // Detect incoming calls
-        if (combined.includes('incoming') || combined.includes('calling') ||
-            combined.includes('call from') || combined.includes('llamada')) {
-          const caller = title || body;
-          const msg = `📞 Incoming: ${caller}`;
-          session.layouts.showTextWall(msg);
-          broadcast('incoming_call', { caller, title, body });
-          broadcast('reply', { text: msg });
-          setTimeout(() => session.layouts.showTextWall(''), 15000);
-          console.log(`📞 Incoming call: ${caller}`);
+    // Try all known notification event names
+    const notifHandlers = ['onNotification', 'onPhoneCall', 'onIncomingCall', 'onCallNotification'];
+    notifHandlers.forEach(handlerName => {
+      try {
+        const handler = (session.events as any)[handlerName];
+        if (typeof handler === 'function') {
+          handler.call(session.events, (notification: any) => {
+            const title = String(notification?.title || notification?.callerName || '');
+            const body = String(notification?.body || notification?.message || '');
+            const combined = (title + ' ' + body).toLowerCase();
+            console.log(`🔔 [${handlerName}] "${title}" — "${body}"`);
+            const isCall = combined.includes('incoming') || combined.includes('calling') ||
+              combined.includes('call from') || combined.includes('llamada') ||
+              combined.includes('entrante');
+            if (isCall || handlerName.includes('Call')) {
+              const caller = title || body || 'Unknown';
+              const msg = `📞 Incoming: ${caller}`;
+              session.layouts.showTextWall(msg);
+              broadcast('incoming_call', { caller, title, body });
+              broadcast('reply', { text: msg });
+              setTimeout(() => session.layouts.showTextWall(''), 15000);
+              console.log(`📞 Incoming call detected via ${handlerName}: ${caller}`);
+            }
+          });
+          console.log(`✅ Registered ${handlerName}`);
         }
-      });
-    } catch (e) {
-      console.log('Notifications not available in this SDK version');
-    }
+      } catch (e) {
+        // Handler not available
+      }
+    });
 
     session.events.onTranscription(async (data) => {
       const userText = data.text?.trim();
