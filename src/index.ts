@@ -115,6 +115,19 @@ class KaiApp extends AppServer {
     translationModeMap.set(sessionId, false);
     broadcast('session_start', { clear: true });
     broadcast('status', { state: 'ready', translation_mode: false });
+
+    // Clear Redis conversation history so old messages don't replay
+    try {
+      await fetch(`${KAI_API_URL}/session/clear`, {
+        method: 'POST',
+        headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: userId }),
+      });
+      console.log('🧹 Redis session cleared');
+    } catch (e) {
+      console.warn('Could not clear Redis session:', e);
+    }
+
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
 
