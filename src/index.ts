@@ -143,22 +143,6 @@ class KaiApp extends AppServer {
 
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
-
-    // Listen for incoming call notifications
-    if (session.events.onPhoneNotification) {
-      session.events.onPhoneNotification((notification: any) => {
-        const title = notification.title || '';
-        const body = notification.body || '';
-        // Detect incoming calls from Phone, WhatsApp, FaceTime
-        const isCall = /incoming|calling|call from/i.test(title + ' ' + body);
-        if (isCall) {
-          const caller = title.replace(/incoming call|calling/gi, '').trim() || body;
-          const msg = `📞 Incoming: ${caller}`;
-          session.layouts.showTextWall(msg);
-          broadcast('incoming_call', { caller, title, body });
-          setTimeout(() => session.layouts.showTextWall(''), 15000);
-          console.log(`📞 Incoming call detected: ${caller}`);
-        }
       });
     }
 
