@@ -1,22 +1,20 @@
 import "dotenv/config";
 import * as fs from 'fs';
 import * as path from 'path';
-import * as http from 'http';
 import { AppServer, TpaSession } from '@mentra/sdk';
 import { callKaiAPI, translateText, detectLanguage, lookupContact, userIdToSpeakerKey, KaiResponse } from './kai-client';
 
 const PACKAGE_NAME = process.env.PACKAGE_NAME || 'com.kai.glasses';
 const MENTRA_API_KEY = process.env.MENTRA_API_KEY || '';
 const PORT = parseInt(process.env.PORT || '3000');
-const WEBVIEW_PORT = PORT + 1;
 const DEFAULT_TARGET_LANG = process.env.TARGET_LANG || 'English';
 const USER_LANG_CODE = process.env.USER_LANG_CODE || 'en';
 const KAI_API_URL = process.env.KAI_API_URL || 'https://kai-cloud-production.up.railway.app';
 const KAI_API_KEY_VAL = process.env.KAI_API_KEY || 'kai-secret-guille-2026';
+
 const WEBVIEW_HTML = fs.readFileSync(path.join(__dirname, '..', 'webview.html'), 'utf-8');
 
-// SSE clients
-const sseClients = new Set<http.ServerResponse>();
+const sseClients = new Set<any>();
 function broadcast(event: string, data: object) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   sseClients.forEach(res => { try { res.write(payload); } catch {} });
@@ -52,7 +50,7 @@ function getIntent(text: string): Intent {
   if (ftMatch) return { type: 'call', name: ftMatch[1].trim(), app: 'facetime' };
 
   const appCallMatch = t.match(/^(?:call|llama(?:\s+a)?)\s+(.+?)\s+on\s+(whatsapp|facetime|phone)$/) ||
-    t.match(/^(?:call|llama(?:\s+a)?)\s+(.+?)\s+(?:por|via|through)\s+(whatsapp|facetime|phone)$/);
+    t.match(/^(?:call|llama(?:\s+a)?)\s+(.+?)\s+(?:por|via)\s+(whatsapp|facetime|phone)$/);
   if (appCallMatch) return { type: 'call', name: appCallMatch[1].trim(), app: appCallMatch[2] as any };
 
   const phoneMatch = t.match(/^call\s+(.+?)(?:\s+on\s+(?:phone|regular))?$/) ||
@@ -66,73 +64,60 @@ function getIntent(text: string): Intent {
   return { type: 'normal' };
 }
 
-// ── Standalone HTTP server for webview + SSE + API proxy ──────────────────────
-function startWebviewServer() {
-  const server = http.createServer(async (req, res) => {
-    const url = req.url || '/';
+class KaiApp extends AppServer {
+  constructor() {
+    super({
+      packageName: PACKAGE_NAME,
+      apiKey: MENTRA_API_KEY,
+      port: PORT,
+    } as any);
 
-    // CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
+    // Register routes on the built-in Express server
+    const app = (this as any).app;
 
-    // SSE endpoint
-    if (url === '/events') {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      });
+    // SSE
+    app.get('/events', (req: any, res: any) => {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.flushHeaders();
       res.write(`event: session_start\ndata: ${JSON.stringify({ clear: true })}\n\n`);
       res.write(`event: status\ndata: ${JSON.stringify({ state: 'ready', translation_mode: false })}\n\n`);
       sseClients.add(res);
       req.on('close', () => sseClients.delete(res));
-      return;
-    }
+    });
 
-    // Webview page
-    if (url === '/' || url === '/webview') {
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(WEBVIEW_HTML);
-      return;
-    }
+    // Webview
+    app.get('/webview', (_req: any, res: any) => res.send(WEBVIEW_HTML));
+    app.get('/', (_req: any, res: any) => res.send(WEBVIEW_HTML));
 
-    // Contacts proxy — GET list
-    if (url === '/api/contacts' && req.method === 'GET') {
+    // Contacts proxy — GET
+    app.get('/api/contacts', async (_req: any, res: any) => {
       try {
         const r = await fetch(`${KAI_API_URL}/contacts/guille`, { headers: { 'x-api-key': KAI_API_KEY_VAL } });
-        const data = await r.json();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(data));
-      } catch { res.writeHead(500); res.end('{}'); }
-      return;
-    }
+        res.json(await r.json());
+      } catch { res.status(500).json({ contacts: [] }); }
+    });
 
     // Contacts proxy — DELETE all
-    if (url === '/api/contacts' && req.method === 'DELETE') {
+    app.delete('/api/contacts', async (_req: any, res: any) => {
       try {
         const r = await fetch(`${KAI_API_URL}/contacts/guille`, { method: 'DELETE', headers: { 'x-api-key': KAI_API_KEY_VAL } });
-        const data = await r.json();
-        res.writeHead(r.status, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(data));
-      } catch { res.writeHead(500); res.end('{}'); }
-      return;
-    }
+        res.status(r.status).json(await r.json());
+      } catch { res.status(500).json({ error: 'Failed' }); }
+    });
 
     // Contacts proxy — DELETE single
-    const delMatch = url.match(/^\/api\/contacts\/(.+)$/);
-    if (delMatch && req.method === 'DELETE') {
+    app.delete('/api/contacts/:id', async (req: any, res: any) => {
       try {
-        await fetch(`${KAI_API_URL}/contacts/guille/${delMatch[1]}`, { method: 'DELETE', headers: { 'x-api-key': KAI_API_KEY_VAL } });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'deleted' }));
-      } catch { res.writeHead(500); res.end('{}'); }
-      return;
-    }
+        await fetch(`${KAI_API_URL}/contacts/guille/${req.params.id}`, { method: 'DELETE', headers: { 'x-api-key': KAI_API_KEY_VAL } });
+        res.json({ status: 'deleted' });
+      } catch { res.status(500).json({ error: 'Failed' }); }
+    });
 
-    // Contacts proxy — POST sync (vCard)
-    if (url === '/api/contacts/sync' && req.method === 'POST') {
+    // Contacts proxy — vCard sync
+    app.post('/api/contacts/sync', async (req: any, res: any) => {
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => chunks.push(chunk));
       req.on('end', async () => {
@@ -143,30 +128,10 @@ function startWebviewServer() {
             headers: { 'x-api-key': KAI_API_KEY_VAL, 'content-type': req.headers['content-type'] || '', 'content-length': body.length.toString() },
             body,
           });
-          const data = await r.json();
-          res.writeHead(r.status, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(data));
-        } catch { res.writeHead(500); res.end('{"error":"Sync failed"}'); }
+          res.status(r.status).json(await r.json());
+        } catch { res.status(500).json({ error: 'Sync failed' }); }
       });
-      return;
-    }
-
-    res.writeHead(404); res.end('Not found');
-  });
-
-  server.listen(WEBVIEW_PORT, () => {
-    console.log(`🌐 Webview server on port ${WEBVIEW_PORT}`);
-  });
-}
-
-// ── KAI App ───────────────────────────────────────────────────────────────────
-class KaiApp extends AppServer {
-  constructor() {
-    super({
-      packageName: PACKAGE_NAME,
-      apiKey: MENTRA_API_KEY,
-      port: PORT,
-    } as any);
+    });
   }
 
   protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
@@ -176,7 +141,7 @@ class KaiApp extends AppServer {
     broadcast('session_start', { clear: true });
     broadcast('status', { state: 'ready', translation_mode: false });
 
-    // Clear Redis session history
+    // Clear Redis
     try {
       await fetch(`${KAI_API_URL}/session/clear`, {
         method: 'POST',
@@ -211,7 +176,6 @@ class KaiApp extends AppServer {
       console.log('✅ onPhoneNotifications registered');
     } catch (e) { console.log('⚠️ onPhoneNotifications error:', e); }
 
-    // Transcription handler
     const transcriptionHandler = async (data: any) => {
       const userText = (data.text || '').trim();
       if (!userText || userText.length < 2) return;
@@ -219,7 +183,6 @@ class KaiApp extends AppServer {
 
       console.log(`\n👤 "${userText}"`);
 
-      // Filter ambient noise
       const words = userText.trim().split(/\s+/);
       const knownCommands = ['call', 'llama', 'llamar', 'translate', 'traducir',
         'help', 'ayuda', 'facetime', 'whatsapp', 'translation', 'simulate'];
@@ -233,9 +196,9 @@ class KaiApp extends AppServer {
       console.log(`   → ${intent.type}`);
 
       if (intent.type === 'test_call') {
-        const msg = `📞 Incoming: ${intent.name}`;
+        const msg = `📞 Incoming: ${(intent as any).name}`;
         await session.layouts.showTextWall(msg);
-        broadcast('incoming_call', { caller: intent.name, title: intent.name, body: '' });
+        broadcast('incoming_call', { caller: (intent as any).name, title: (intent as any).name, body: '' });
         broadcast('reply', { text: msg });
         setTimeout(() => session.layouts.showTextWall(''), 10000);
         return;
@@ -335,14 +298,10 @@ class KaiApp extends AppServer {
   }
 }
 
-// Start both servers
-startWebviewServer();
-
 const app = new KaiApp();
 app.start()
   .then(() => {
     console.log(`\n🚀 KAI running on port ${PORT}`);
-    console.log(`🌐 Webview on port ${WEBVIEW_PORT}`);
     console.log(`📦 Package: ${PACKAGE_NAME}`);
     console.log(`🌍 Translation target: ${DEFAULT_TARGET_LANG}`);
     console.log(`🔗 Waiting for connections...\n`);
