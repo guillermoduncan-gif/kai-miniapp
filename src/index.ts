@@ -29,8 +29,10 @@ type Intent =
   | { type: 'normal' };
 
 function getIntent(text: string): Intent {
-  // Strip "Hey KAI", "OK KAI", "KAI" prefix
-  const t = text.toLowerCase().trim().replace(/^(hey\s+kai|ok\s+kai|kai)[,\s]+/, '').trim();
+  // Strip common prefixes and punctuation
+  let t = text.toLowerCase().trim();
+  t = t.replace(/^(hey\s+kai|ok\s+kai|kai)[,!\s]+/, '').trim();
+  t = t.replace(/[,!.]+/g, ' ').replace(/\s+/g, ' ').trim();
 
   // Translation toggles
   if (/^(translation|translate)\s+on$/.test(t) || t.includes('translation mode on') || t.includes('start translating'))
@@ -38,20 +40,25 @@ function getIntent(text: string): Intent {
   if (/^(translation|translate)\s+off$/.test(t) || t.includes('translation mode off') || t.includes('stop translating'))
     return { type: 'toggle_translation', on: false };
 
-  // Call on specific app: "call [name] on whatsapp/facetime"
-  const appCallMatch = t.match(/^call\s+(.+?)\s+on\s+(whatsapp|facetime|phone)$/);
-  if (appCallMatch) return { type: 'call', name: appCallMatch[1].trim(), app: appCallMatch[2] as any };
-
   // WhatsApp
-  const waMatch = t.match(/^(?:whatsapp|whats app)\s+(.+?)$/) || t.match(/^(?:message|text)\s+(.+?)\s+on\s+whatsapp$/);
+  const waMatch = t.match(/^(?:whatsapp|whats app)\s+(.+?)$/) ||
+    t.match(/^(?:message|text)\s+(.+?)\s+on\s+whatsapp$/);
   if (waMatch) return { type: 'call', name: waMatch[1].trim(), app: 'whatsapp' };
 
   // FaceTime
   const ftMatch = t.match(/^facetime\s+(.+?)$/);
   if (ftMatch) return { type: 'call', name: ftMatch[1].trim(), app: 'facetime' };
 
-  // Phone call: "call [name]"
-  const phoneMatch = t.match(/^call\s+(.+?)(?:\s+on\s+(?:phone|regular))?$/);
+  // Call on specific app: "call [name] on whatsapp/facetime"
+  const appCallMatch = t.match(/^(?:call|llama(?:\s+a)?)\s+(.+?)\s+on\s+(whatsapp|facetime|phone)$/) ||
+    t.match(/^(?:call|llama(?:\s+a)?)\s+(.+?)\s+(?:por|via|through)\s+(whatsapp|facetime|phone)$/);
+  if (appCallMatch) return { type: 'call', name: appCallMatch[1].trim(), app: appCallMatch[2] as any };
+
+  // Phone call — English: "call [name]" or Spanish: "llama a [name]" / "llamar a [name]"
+  const phoneMatch = t.match(/^call\s+(.+?)(?:\s+on\s+(?:phone|regular))?$/) ||
+    t.match(/^llama(?:r)?(?:\s+a)?\s+(.+?)$/) ||
+    t.match(/^(?:can you |please )?call\s+(.+?)$/) ||
+    t.match(/^hacer una llamada a\s+(.+?)$/);
   if (phoneMatch) return { type: 'call', name: phoneMatch[1].trim(), app: 'phone' };
 
   // Translate
@@ -87,7 +94,7 @@ class KaiApp extends AppServer {
       } catch { res.json({ contacts: [] }); }
     });
 
-    // Contacts proxy — DELETE
+    // Contacts proxy — DELETE single
     expressApp.delete('/api/contacts/:id', async (req: any, res: any) => {
       try {
         await fetch(`${KAI_API_URL}/contacts/guille/${req.params.id}`, {
@@ -95,6 +102,16 @@ class KaiApp extends AppServer {
         });
         res.json({ status: 'deleted' });
       } catch { res.status(500).json({ error: 'Failed' }); }
+    });
+
+    // Contacts proxy — DELETE ALL (bulk)
+    expressApp.delete('/api/contacts', async (_req: any, res: any) => {
+      try {
+        const r = await fetch(`${KAI_API_URL}/contacts/guille`, {
+          method: 'DELETE', headers: { 'x-api-key': KAI_API_KEY_VAL }
+        });
+        res.status(r.status).json(await r.json());
+      } catch { res.status(500).json({ error: 'Failed to clear contacts' }); }
     });
 
     // Contacts proxy — vCard SYNC (multipart passthrough)
@@ -134,7 +151,7 @@ class KaiApp extends AppServer {
       await fetch(`${KAI_API_URL}/session/clear`, {
         method: 'POST',
         headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId }),
+        body: JSON.stringify({ session_id: userId }),
       });
       console.log('🧹 Redis session cleared');
     } catch (e) {

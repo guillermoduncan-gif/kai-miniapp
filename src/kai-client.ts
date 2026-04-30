@@ -69,7 +69,7 @@ export async function detectLanguage(text: string): Promise<DetectResponse> {
 }
 
 export async function lookupContact(speakerKey: string, name: string): Promise<Contact | null> {
-  const res = await fetch(`${KAI_API_URL}/contacts/${speakerKey}/lookup/${encodeURIComponent(name)}`, { headers });
+  const res = await fetch(`${KAI_API_URL}/contacts/${speakerKey}/lookup?name=${encodeURIComponent(name)}`, { headers });
   if (!res.ok) return null;
   const data = await res.json() as { found: boolean; contact: Contact | null };
   return data.found ? data.contact : null;

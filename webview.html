@@ -369,10 +369,24 @@ async function deleteContact(id) {
 
 async function clearAllContacts() {
   if (!confirm('Delete ALL contacts? This cannot be undone.')) return;
-  const res = await fetch('/api/contacts');
-  const data = await res.json();
-  await Promise.all((data.contacts || []).map(c => fetch('/api/contacts/' + c.id, { method: 'DELETE' })));
-  loadContacts();
+  const btn = document.getElementById('syncBtn');
+  const result = document.getElementById('syncResult');
+  btn.disabled = true;
+  btn.textContent = 'CLEARING...';
+  try {
+    const res = await fetch('/api/contacts', { method: 'DELETE' });
+    const data = await res.json();
+    result.className = 'sync-result success';
+    result.textContent = 'All contacts cleared. Ready for fresh sync.';
+    result.style.display = 'block';
+    loadContacts();
+  } catch(e) {
+    result.className = 'sync-result error';
+    result.textContent = 'Failed to clear contacts.';
+    result.style.display = 'block';
+  }
+  btn.disabled = false;
+  btn.textContent = '⟳ SYNC CONTACTS';
 }
 
 // SSE
