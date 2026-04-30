@@ -396,17 +396,26 @@ function connect() {
   es.addEventListener('user', e => { addMessage('user', JSON.parse(e.data).text); showThinking(); setStatus('thinking'); });
   es.addEventListener('reply', e => { addMessage('kai', JSON.parse(e.data).text); setStatus('ready'); });
   es.addEventListener('translation', e => { const d = JSON.parse(e.data); addMessage('translation', d.translation, d.detected_language); setStatus('ready'); });
+  // Legacy overlay (kept for future use)
   es.addEventListener('call', e => { const d = JSON.parse(e.data); showCallOverlay(d.contact, d.app); setStatus('ready'); });
-  es.addEventListener('incoming_call', e => {
+
+  // Direct call — skip overlay, open native dialer immediately
+  es.addEventListener('direct_call', e => {
     const d = JSON.parse(e.data);
-    // Show incoming call banner
-    hideEmpty(); removeThinking();
-    const msg = document.createElement('div');
-    msg.className = 'message kai';
-    msg.innerHTML = '<div class="message-label" style="color:rgba(240,192,64,0.6)">INCOMING CALL</div><div class="bubble" style="border-color:rgba(240,192,64,0.4);color:var(--gold)">📞 ' + esc(d.caller || d.title) + '</div>';
-    conv.appendChild(msg); scrollBottom();
+    const contact = d.contact;
+    const app = d.app;
+    const phone = contact.phone.replace(/[^+\d]/g, '');
+    const urls = {
+      whatsapp: 'https://wa.me/' + phone.replace('+', ''),
+      facetime: 'facetime:' + phone,
+      phone: 'tel:' + phone
+    };
+    addMessage('call', '📞 Calling ' + contact.name + '...');
     setStatus('ready');
+    // Small delay so the message appears before app switches
+    setTimeout(() => { window.location.href = urls[app] || urls.phone; }, 300);
   });
+
   es.addEventListener('status', e => {
     const d = JSON.parse(e.data);
     setStatus(d.state);
@@ -416,6 +425,19 @@ function connect() {
       translationPill.className = 'mode-pill' + (d.translation_mode ? ' active' : '');
     }
   });
+  es.addEventListener('incoming_call', e => {
+    const d = JSON.parse(e.data);
+    hideEmpty(); removeThinking();
+    const msg = document.createElement('div');
+    msg.className = 'message kai';
+    msg.style.animation = 'slideIn 0.3s ease-out';
+    msg.innerHTML = '<div class="message-label" style="color:rgba(240,192,64,0.8)">INCOMING CALL</div>' +
+      '<div class="bubble" style="border-color:rgba(240,192,64,0.5);color:var(--gold);font-size:1.1em">📞 ' + esc(d.caller || d.title) + '</div>';
+    conv.appendChild(msg);
+    scrollBottom();
+    setStatus('ready');
+  });
+
   es.onerror = () => { setStatus('ready'); setTimeout(connect, 3000); es.close(); };
 }
 connect();

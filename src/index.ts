@@ -161,6 +161,30 @@ class KaiApp extends AppServer {
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
 
+    // Listen for phone notifications (incoming calls, messages)
+    try {
+      (session.events as any).onNotification?.((notification: any) => {
+        const title = String(notification?.title || '');
+        const body = String(notification?.body || notification?.message || '');
+        const combined = (title + ' ' + body).toLowerCase();
+        console.log(`🔔 Notification: "${title}" — "${body}"`);
+
+        // Detect incoming calls
+        if (combined.includes('incoming') || combined.includes('calling') ||
+            combined.includes('call from') || combined.includes('llamada')) {
+          const caller = title || body;
+          const msg = `📞 Incoming: ${caller}`;
+          session.layouts.showTextWall(msg);
+          broadcast('incoming_call', { caller, title, body });
+          broadcast('reply', { text: msg });
+          setTimeout(() => session.layouts.showTextWall(''), 15000);
+          console.log(`📞 Incoming call: ${caller}`);
+        }
+      });
+    } catch (e) {
+      console.log('Notifications not available in this SDK version');
+    }
+
     session.events.onTranscription(async (data) => {
       const userText = data.text?.trim();
       if (!userText || userText.length < 2) return;
@@ -194,8 +218,11 @@ class KaiApp extends AppServer {
         }
         const app = intent.app !== 'phone' ? intent.app : (contact.default_app as any || 'phone');
         const appNames: Record<string, string> = { phone: 'Phone', whatsapp: 'WhatsApp', facetime: 'FaceTime' };
-        await session.layouts.showTextWall(`Calling ${contact.name} on ${appNames[app] || app}...`);
-        broadcast('call', { contact, app });
+        const msg = `📞 Calling ${contact.name}...`;
+        await session.layouts.showTextWall(msg);
+        // Skip overlay — go straight to native dialer (one confirmation only)
+        broadcast('direct_call', { contact, app });
+        broadcast('reply', { text: msg });
         broadcast('status', { state: 'ready' });
         return;
       }
