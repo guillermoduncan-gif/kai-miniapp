@@ -168,8 +168,9 @@ class KaiApp extends AppServer {
       packageName: PACKAGE_NAME,
       apiKey: MENTRA_API_KEY,
       port: PORT,
-      serverUrl: SERVER_URL,
-    });
+    } as any);
+    // Set serverUrl so onPhoneNotifications permission check passes
+    (this as any).config.serverUrl = SERVER_URL;
   }
 
   protected async onSession(session: TpaSession, sessionId: string, userId: string): Promise<void> {
