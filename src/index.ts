@@ -27,9 +27,12 @@ type Intent =
   | { type: 'translate'; text: string }
   | { type: 'call'; name: string; app: 'phone' | 'whatsapp' | 'facetime' }
   | { type: 'test_call'; name: string }
+  | { type: 'reminder'; text: string }
+  | { type: 'list_reminders' }
   | { type: 'normal' };
 
 function getIntent(text: string): Intent {
+  const userOriginal = text; // keep original for reminder parsing
   let t = text.toLowerCase().trim();
   t = t.replace(/^(hey\s+kai|ok\s+kai|kai)[,!\s]+/, '').trim();
   t = t.replace(/[,!.]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -57,6 +60,16 @@ function getIntent(text: string): Intent {
     t.match(/^llama(?:r)?(?:\s+a)?\s+(.+?)$/) ||
     t.match(/^(?:can you |please )?call\s+(.+?)$/);
   if (phoneMatch) return { type: 'call', name: phoneMatch[1].trim(), app: 'phone' };
+
+  // Reminder commands
+  if (t.includes('remind me') || t.includes('recuérdame') || t.includes('recordarme') ||
+      t.startsWith('set a reminder') || t.startsWith('set reminder'))
+    return { type: 'reminder', text: userOriginal };
+
+  // List reminders
+  if (t.includes('my reminders') || t.includes('what are my reminders') ||
+      t.includes('mis recordatorios') || t.includes('show reminders'))
+    return { type: 'list_reminders' } as any;
 
   if (/^translate\s+\S+/i.test(t))
     return { type: 'translate', text: t.replace(/^translate\s+/i, '') };
@@ -233,6 +246,81 @@ class KaiApp extends AppServer {
         broadcast('direct_call', { contact, app });
         broadcast('reply', { text: msg });
         broadcast('status', { state: 'ready' });
+        return;
+      }
+
+      // ── Reminder ────────────────────────────────────────────────────────
+      if (intent.type === 'reminder') {
+        broadcast('user', { text: userText });
+        broadcast('status', { state: 'thinking' });
+        await session.layouts.showTextWall('⏰ Setting reminder...');
+        try {
+          const parseRes = await fetch(`${KAI_API_URL}/reminders/parse`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              speaker_key: speakerKey,
+              text: (intent as any).text,
+              timezone: 'America/Costa_Rica',
+            }),
+          });
+          const parsed = await parseRes.json() as any;
+          if (!parseRes.ok || !parsed.valid) {
+            const msg = "I couldn't understand that reminder. Try: 'remind me to call mom at 3pm'";
+            await session.layouts.showTextWall(msg);
+            broadcast('reply', { text: msg });
+            broadcast('status', { state: 'ready' });
+            return;
+          }
+          // Save the reminder
+          await fetch(`${KAI_API_URL}/reminders/`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              speaker_key: speakerKey,
+              message: parsed.message,
+              remind_at: parsed.remind_at,
+              timezone: 'America/Costa_Rica',
+            }),
+          });
+          const msg = `⏰ Got it! I'll remind you to ${parsed.message} ${parsed.human_time}`;
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          setTimeout(() => session.layouts.showTextWall(''), 8000);
+        } catch (e) {
+          const msg = 'Failed to set reminder. Try again.';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+        }
+        return;
+      }
+
+      // ── List reminders ───────────────────────────────────────────────────
+      if ((intent as any).type === 'list_reminders') {
+        broadcast('user', { text: userText });
+        try {
+          const res = await fetch(`${KAI_API_URL}/reminders/${speakerKey}`, {
+            headers: { 'x-api-key': KAI_API_KEY_VAL },
+          });
+          const data = await res.json() as any;
+          const reminders = data.reminders || [];
+          let msg = '';
+          if (reminders.length === 0) {
+            msg = 'You have no upcoming reminders.';
+          } else {
+            const items = reminders.slice(0, 3).map((r: any) => `• ${r.message}`).join('\n');
+            msg = `You have ${reminders.length} reminder${reminders.length > 1 ? 's' : ''}:\n${items}`;
+          }
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          setTimeout(() => session.layouts.showTextWall(''), 10000);
+        } catch {
+          broadcast('reply', { text: 'Could not fetch reminders.' });
+          broadcast('status', { state: 'ready' });
+        }
         return;
       }
 
