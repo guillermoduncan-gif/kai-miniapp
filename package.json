@@ -10,7 +10,7 @@
     "watch": "ts-node-dev --respawn src/index.ts"
   },
   "dependencies": {
-    "@mentra/sdk": "latest",
+    "@mentra/sdk": "^3.0.0-alpha.4",
     "dotenv": "^17.4.2"
   },
   "devDependencies": {

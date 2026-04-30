@@ -74,7 +74,12 @@ function getIntent(text: string): Intent {
 
 class KaiApp extends AppServer {
   constructor() {
-    super({ packageName: PACKAGE_NAME, apiKey: MENTRA_API_KEY, port: PORT });
+    super({
+      packageName: PACKAGE_NAME,
+      apiKey: MENTRA_API_KEY,
+      port: PORT,
+      serverUrl: process.env.SERVER_URL || 'https://kai-miniapp-production.up.railway.app',
+    });
     const expressApp = (this as any).app;
 
     // SSE
@@ -165,35 +170,48 @@ class KaiApp extends AppServer {
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
 
-    // onPhoneNotifications — confirmed available in this SDK version
-    try {
-      session.events.onPhoneNotifications((notification: any) => {
-        const title = String(notification?.title || notification?.appName || '');
-        const body = String(notification?.body || notification?.message || notification?.content || '');
-        const combined = (title + ' ' + body).toLowerCase();
-        console.log(`🔔 Phone notification: "${title}" — "${body}"`);
-        console.log(`🔔 Full notification:`, JSON.stringify(notification));
+    // Phone notification handler — logs everything so we can see what arrives
+    const handlePhoneNotification = (notification: any) => {
+      console.log('🔔 RAW notification:', JSON.stringify(notification));
+      const title = String(notification?.title || notification?.appName || notification?.app || '');
+      const body = String(notification?.body || notification?.message || notification?.content || notification?.text || '');
+      const combined = (title + ' ' + body).toLowerCase();
 
-        // Detect incoming calls from Phone, WhatsApp, FaceTime
-        const isCall = combined.includes('incoming') || combined.includes('calling') ||
-          combined.includes('call from') || combined.includes('llamada entrante') ||
-          combined.includes('entrante') || combined.includes('facetime') ||
-          title.toLowerCase().includes('phone') || title.toLowerCase().includes('whatsapp');
+      // Log every notification so we can debug
+      console.log(`🔔 title="${title}" body="${body}"`);
 
+      // Detect incoming calls
+      const isCall = combined.includes('incoming') || combined.includes('calling') ||
+        combined.includes('call from') || combined.includes('llamada') ||
+        combined.includes('entrante') || combined.includes('facetime') ||
+        notification?.type === 'call' || notification?.category === 'call';
+
+      if (isCall || true) { // Log ALL notifications temporarily to debug
+        const caller = body || title || JSON.stringify(notification);
+        const msg = isCall ? `📞 Incoming: ${caller}` : `🔔 ${title}: ${body}`;
         if (isCall) {
-          // Extract caller name — usually in title or body
-          const caller = body || title || 'Unknown';
-          const msg = `📞 Incoming: ${caller}`;
-          session.layouts.showTextWall(msg);
+          session.layouts.showTextWall(`📞 ${caller}`);
           broadcast('incoming_call', { caller, title, body });
-          broadcast('reply', { text: msg });
           setTimeout(() => session.layouts.showTextWall(''), 15000);
-          console.log(`📞 Incoming call: ${caller}`);
         }
-      });
+        broadcast('reply', { text: msg });
+        console.log(`${isCall ? '📞' : '🔔'} ${msg}`);
+      }
+    };
+
+    // Register using confirmed subscription name "phone_notification"
+    try {
+      session.events.onPhoneNotifications(handlePhoneNotification);
       console.log('✅ onPhoneNotifications registered');
-    } catch (e) {
-      console.log('⚠️ onPhoneNotifications not available:', e);
+    } catch (e1) {
+      console.log('⚠️ onPhoneNotifications failed:', e1);
+      // Try alternative names
+      try {
+        (session.events as any).on('phone_notification', handlePhoneNotification);
+        console.log('✅ on(phone_notification) registered');
+      } catch (e2) {
+        console.log('⚠️ phone_notification fallback failed:', e2);
+      }
     }
 
     const transcriptionHandler = async (data: any) => {
