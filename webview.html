@@ -239,6 +239,7 @@
 
 <div class="bottom-bar">
   <div class="mode-pill" id="translationPill">TRANSLATION OFF</div>
+  <div class="mode-pill" id="listeningPill" style="opacity:0.4">👂 LISTEN OFF</div>
   <div class="timestamp" id="clock"></div>
 </div>
 
@@ -835,6 +836,15 @@ function connect() {
       translationPill.textContent = d.translation_mode ? 'TRANSLATION ON' : 'TRANSLATION OFF';
       translationPill.className = 'mode-pill' + (d.translation_mode ? ' active' : '');
     }
+    if (d.listening_mode !== undefined) {
+      const lp = document.getElementById('listeningPill');
+      if (lp) {
+        lp.textContent = d.listening_mode ? '👂 LISTENING' : '👂 LISTEN OFF';
+        lp.style.opacity = d.listening_mode ? '1' : '0.4';
+        lp.style.borderColor = d.listening_mode ? 'rgba(255,200,100,0.8)' : 'rgba(255,255,255,0.2)';
+        lp.style.color = d.listening_mode ? '#ffc864' : '';
+      }
+    }
   });
   es.addEventListener('incoming_call', e => {
     const d = JSON.parse(e.data);
@@ -849,7 +859,101 @@ function connect() {
     setStatus('ready');
   });
 
-  // Vision record / follow control via voice
+  // Navigate — open Waze deep link
+  es.addEventListener('navigate', e => {
+    const d = JSON.parse(e.data);
+    hideEmpty(); removeThinking();
+    const msg = document.createElement('div');
+    msg.className = 'message kai';
+    msg.innerHTML = '<div class="message-label" style="color:rgba(79,195,247,0.8)">🗺️ NAVIGATION</div>' +
+      '<div class="bubble" style="border-color:rgba(79,195,247,0.3)">' +
+      'Opening Waze to ' + esc(d.destination) + '...<br><br>' +
+      '<a href="' + esc(d.waze_url) + '" target="_blank" style="color:#4fc3f7;text-decoration:underline;">🗺️ Open Waze</a>' +
+      '</div>';
+    conv.appendChild(msg); scrollBottom();
+    // Auto-open Waze after short delay
+    setTimeout(() => { window.location.href = d.waze_url; }, 800);
+  });
+
+  // Listen summary — full analysis
+  es.addEventListener('listen_summary', e => {
+    const d = JSON.parse(e.data);
+    hideEmpty(); removeThinking();
+
+    // Build rich summary card
+    let html = '<div class="message-label" style="color:rgba(255,200,100,0.8)">📝 CONVERSATION ANALYSIS</div><div class="bubble" style="border-color:rgba(255,200,100,0.3);white-space:pre-wrap">';
+
+    if (d.summary) html += '<strong>Summary</strong>\n' + esc(d.summary) + '\n\n';
+
+    if (d.key_points?.length) {
+      html += '<strong>🔑 Key Points</strong>\n';
+      d.key_points.forEach(p => { html += '• ' + esc(p) + '\n'; });
+      html += '\n';
+    }
+
+    if (d.action_items?.length) {
+      html += '<strong>✅ Action Items</strong>\n';
+      d.action_items.forEach(a => {
+        let line = '• ' + esc(a.task);
+        if (a.assignee) line += ' (' + esc(a.assignee) + ')';
+        if (a.deadline) line += ' — ' + esc(a.deadline);
+        html += line + '\n';
+      });
+      html += '\n';
+    }
+
+    if (d.sentiment?.overall) {
+      const emojis = { positive:'😊', negative:'😟', mixed:'😐', neutral:'😶' };
+      const emoji = emojis[d.sentiment.overall] || '😐';
+      html += '<strong>' + emoji + ' Tone</strong>: ' + esc(d.sentiment.overall) + ' / ' + esc(d.sentiment.tone || '') + '\n\n';
+    }
+
+    if (d.speakers?.length > 1) {
+      html += '<strong>👥 Speakers</strong>\n';
+      d.speakers.forEach(s => { html += '• ' + esc(s.label) + (s.role ? ' (' + esc(s.role) + ')' : '') + '\n'; });
+      html += '\n';
+    }
+
+    if (d.coaching_tips?.length) {
+      html += '<strong>💡 Coaching</strong>\n';
+      d.coaching_tips.forEach(t => { html += '• ' + esc(t) + '\n'; });
+      html += '\n';
+    }
+
+    if (d.stress_flags?.length) {
+      html += '<strong>⚠️ Stress Flags</strong>\n';
+      d.stress_flags.forEach(f => { html += '• ' + esc(f) + '\n'; });
+      html += '\n';
+    }
+
+    if (d.follow_up_email) {
+      html += '<strong>📧 Follow-up Draft</strong>\n' + esc(d.follow_up_email) + '\n\n';
+    }
+
+    if (d.suggested_reminders?.length) {
+      html += '<strong>⏰ Auto-reminders created: ' + d.suggested_reminders.length + '</strong>\n';
+      d.suggested_reminders.forEach(r => { html += '• ' + esc(r.message) + '\n'; });
+    }
+
+    html += '</div>';
+
+    const msg = document.createElement('div');
+    msg.className = 'message kai';
+    msg.innerHTML = html;
+    conv.appendChild(msg); scrollBottom();
+  });
+
+  // Real-time coach tip during listening
+  es.addEventListener('coach_tip', e => {
+    const d = JSON.parse(e.data);
+    if (!d.tip) return;
+    hideEmpty();
+    const msg = document.createElement('div');
+    msg.className = 'message kai';
+    msg.innerHTML = '<div class="message-label" style="color:rgba(255,200,100,0.8)">💡 COACH</div>' +
+      '<div class="bubble" style="border-color:rgba(255,200,100,0.3);font-style:italic">' + esc(d.tip) + '</div>';
+    conv.appendChild(msg); scrollBottom();
+  });
   es.addEventListener('vision_record', e => {
     const d = JSON.parse(e.data);
     if (d.action === 'start') toggleRecording();
