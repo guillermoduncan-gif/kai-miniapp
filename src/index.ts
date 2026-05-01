@@ -21,6 +21,7 @@ function broadcast(event: string, data: object) {
 }
 
 const translationModeMap = new Map<string, boolean>();
+const continuousModeMap = new Map<string, ReturnType<typeof setInterval>>();
 
 type Intent =
   | { type: 'toggle_translation'; on: boolean }
@@ -29,6 +30,7 @@ type Intent =
   | { type: 'test_call'; name: string }
   | { type: 'reminder'; text: string }
   | { type: 'list_reminders' }
+  | { type: 'vision'; mode: string; query?: string }
   | { type: 'normal' };
 
 function getIntent(text: string): Intent {
@@ -70,6 +72,26 @@ function getIntent(text: string): Intent {
   if (t.includes('my reminders') || t.includes('what are my reminders') ||
       t.includes('mis recordatorios') || t.includes('show reminders'))
     return { type: 'list_reminders' } as any;
+
+  // Vision on/off
+  if (t.includes('vision on') || t.includes('start vision') || t.includes('continuous vision'))
+    return { type: 'vision', mode: 'continuous_on' };
+  if (t.includes('vision off') || t.includes('stop vision'))
+    return { type: 'vision', mode: 'continuous_off' };
+
+  // Vision commands
+  if (t.match(/^(what is this|what('s| is) that|describe (this|what|what i see)/))
+    return { type: 'vision', mode: 'describe' };
+  if (t.match(/^(read this|read what|what does (this|it) say|lee esto)/))
+    return { type: 'vision', mode: 'read' };
+  if (t.match(/^translate (what|this|what i see|what's in front)/))
+    return { type: 'vision', mode: 'translate' };
+  if (t.match(/^(identify|what (is|are) (this|these|that)|que es esto)/))
+    return { type: 'vision', mode: 'identify' };
+  if (t.match(/^(what gesture|gesture|read my (hand|gesture)|qué gesto)/))
+    return { type: 'vision', mode: 'gesture' };
+  if (t.match(/^(look (at this|around|here)|scan (this|the room)|vision on)/))
+    return { type: 'vision', mode: 'describe' };
 
   if (/^translate\s+\S+/i.test(t))
     return { type: 'translate', text: t.replace(/^translate\s+/i, '') };
@@ -127,6 +149,24 @@ class KaiApp extends AppServer {
         await fetch(`${KAI_API_URL}/contacts/guille/${req.params.id}`, { method: 'DELETE', headers: { 'x-api-key': KAI_API_KEY_VAL } });
         res.json({ status: 'deleted' });
       } catch { res.status(500).json({ error: 'Failed' }); }
+    });
+
+    // Vision proxy — phone/webview camera
+    app.post('/api/vision', async (req: any, res: any) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', async () => {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString());
+          const r = await fetch(`${KAI_API_URL}/vision/analyze`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const data = await r.json();
+          res.json(data);
+        } catch (e) { res.status(500).json({ error: 'Vision failed' }); }
+      });
     });
 
     // Contacts proxy — vCard sync
@@ -188,6 +228,45 @@ class KaiApp extends AppServer {
       });
       console.log('✅ onPhoneNotifications registered');
     } catch (e) { console.log('⚠️ onPhoneNotifications error:', e); }
+
+    // ── Continuous vision mode ───────────────────────────────────────────
+    // Analyzes scene every 30 seconds, only alerts on notable things
+    const startContinuousVision = () => {
+      const interval = setInterval(async () => {
+        try {
+          const photo = await (session as any).camera.requestPhoto({ size: 'small' });
+          if (!photo?.data) return;
+          const base64 = Buffer.isBuffer(photo.data)
+            ? photo.data.toString('base64')
+            : Buffer.from(photo.data).toString('base64');
+          const res = await fetch(`${KAI_API_URL}/vision/analyze`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_base64: base64, mode: 'continuous', speaker_key: speakerKey }),
+          });
+          const data = await res.json() as any;
+          if (data.is_notable && data.result !== 'NOTHING_NOTABLE') {
+            await session.layouts.showTextWall(data.result);
+            broadcast('vision_alert', { result: data.result });
+            broadcast('reply', { text: data.result });
+            setTimeout(() => session.layouts.showTextWall(''), 8000);
+            console.log(`👁️ Vision alert: ${data.result}`);
+          }
+        } catch (e) {
+          // Silent fail for continuous mode
+        }
+      }, 30000); // Every 30 seconds
+      continuousModeMap.set(sessionId, interval);
+      console.log('✅ Continuous vision started');
+    };
+
+    // Clean up on session end
+    session.events.onDisconnected?.(() => {
+      const interval = continuousModeMap.get(sessionId);
+      if (interval) { clearInterval(interval); continuousModeMap.delete(sessionId); }
+      translationModeMap.delete(sessionId);
+      console.log('🔴 Session ended, cleaned up');
+    });
 
     const transcriptionHandler = async (data: any) => {
       const userText = (data.text || '').trim();
@@ -319,6 +398,86 @@ class KaiApp extends AppServer {
           setTimeout(() => session.layouts.showTextWall(''), 10000);
         } catch {
           broadcast('reply', { text: 'Could not fetch reminders.' });
+          broadcast('status', { state: 'ready' });
+        }
+        return;
+      }
+
+      // ── Vision ──────────────────────────────────────────────────────────
+      if (intent.type === 'vision') {
+        broadcast('user', { text: userText });
+        broadcast('status', { state: 'thinking' });
+        const modeLabels: Record<string, string> = {
+          describe: '👁️ Looking...',
+          read: '📖 Reading...',
+          translate: '🌍 Translating view...',
+          identify: '🔍 Identifying...',
+          gesture: '👋 Reading gesture...',
+        };
+        await session.layouts.showTextWall(modeLabels[intent.mode] || '👁️ Analyzing...');
+
+        // Handle continuous mode toggle
+        if (intent.mode === 'continuous_on') {
+          if (!continuousModeMap.has(sessionId)) startContinuousVision();
+          const msg = '👁️ Continuous vision ON — I'll alert you to important things';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          return;
+        }
+        if (intent.mode === 'continuous_off') {
+          const interval = continuousModeMap.get(sessionId);
+          if (interval) { clearInterval(interval); continuousModeMap.delete(sessionId); }
+          const msg = '👁️ Continuous vision OFF';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          return;
+        }
+
+        try {
+          // Capture photo from glasses
+          const photo = await (session as any).camera.requestPhoto({ size: 'medium' });
+          if (!photo || !photo.data) {
+            const msg = 'Could not capture photo. Make sure camera permission is enabled.';
+            await session.layouts.showTextWall(msg);
+            broadcast('reply', { text: msg });
+            broadcast('status', { state: 'ready' });
+            return;
+          }
+
+          // Convert to base64
+          const base64 = Buffer.isBuffer(photo.data)
+            ? photo.data.toString('base64')
+            : Buffer.from(photo.data).toString('base64');
+
+          // Send to vision API
+          const visionRes = await fetch(`${KAI_API_URL}/vision/analyze`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              image_base64: base64,
+              mode: intent.mode,
+              speaker_key: speakerKey,
+            }),
+          });
+
+          const visionData = await visionRes.json() as any;
+          const result = visionData.result || 'Could not analyze image.';
+
+          await session.layouts.showTextWall(result);
+          broadcast('vision', { mode: intent.mode, result, photo_size: photo.size });
+          broadcast('reply', { text: result });
+          broadcast('status', { state: 'ready' });
+          setTimeout(() => session.layouts.showTextWall(''), 12000);
+
+        } catch (e: any) {
+          console.error('Vision error:', e);
+          const msg = e?.message?.includes('camera') 
+            ? 'Camera not available. Are you using the glasses?' 
+            : 'Vision analysis failed. Try again.';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
           broadcast('status', { state: 'ready' });
         }
         return;

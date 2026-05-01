@@ -76,6 +76,26 @@
   .call-btn.confirm { background:linear-gradient(135deg,var(--gold),#e6a800); color:#000; }
   .call-btn.cancel { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:rgba(255,255,255,0.5); }
 
+  /* Vision panel */
+  .vision-panel { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+  .camera-preview { position:relative; background:#000; overflow:hidden; flex-shrink:0; height:240px; }
+  .camera-preview video { width:100%; height:100%; object-fit:cover; }
+  .camera-preview canvas { display:none; }
+  .camera-off { display:flex; align-items:center; justify-content:center; height:100%; flex-direction:column; gap:8px; }
+  .camera-off p { font-family:'Share Tech Mono',monospace; font-size:0.62em; color:var(--gold-dim); letter-spacing:2px; }
+  .vision-controls { padding:12px 16px; border-bottom:1px solid var(--border-gold); display:flex; gap:8px; flex-wrap:wrap; }
+  .vision-btn { flex:1; min-width:80px; background:rgba(79,195,247,0.08); border:1px solid rgba(79,195,247,0.2); color:var(--blue); font-family:'Share Tech Mono',monospace; font-size:0.58em; letter-spacing:1.5px; padding:10px 6px; border-radius:8px; cursor:pointer; text-align:center; }
+  .vision-btn:active { background:rgba(79,195,247,0.2); }
+  .vision-btn.active { background:rgba(79,195,247,0.15); border-color:var(--blue); }
+  .vision-btn.capture { background:linear-gradient(135deg,var(--gold),#e6a800); color:#000; border-color:transparent; font-weight:700; }
+  .vision-result { flex:1; overflow-y:auto; padding:14px 16px; }
+  .vision-result::-webkit-scrollbar { width:2px; }
+  .vision-result-item { background:rgba(79,195,247,0.05); border:1px solid rgba(79,195,247,0.15); border-radius:8px; padding:12px 14px; margin-bottom:10px; animation:slideIn 0.3s ease-out; }
+  .vision-result-label { font-family:'Share Tech Mono',monospace; font-size:0.58em; color:var(--blue-dim); letter-spacing:2px; margin-bottom:6px; }
+  .vision-result-text { font-size:0.9em; line-height:1.5; color:#dff0fc; white-space:pre-wrap; }
+  .vision-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; height:100px; opacity:0.4; }
+  .vision-empty p { font-family:'Share Tech Mono',monospace; font-size:0.65em; letter-spacing:2px; color:var(--blue-dim); }
+
   /* Contacts panel */
   .contacts-panel { flex:1; display:flex; flex-direction:column; overflow:hidden; }
 
@@ -135,6 +155,7 @@
 <div class="tabs">
   <div class="tab active" onclick="switchTab('chat')">CHAT</div>
   <div class="tab" onclick="switchTab('contacts')">CONTACTS</div>
+  <div class="tab" onclick="switchTab('vision')">VISION</div>
 </div>
 
 <!-- Chat Panel -->
@@ -181,6 +202,35 @@
   </div>
 </div>
 
+<!-- Vision Panel -->
+<div class="panel" id="panel-vision">
+  <div class="vision-panel">
+    <div class="camera-preview" id="cameraPreview">
+      <div class="camera-off" id="cameraOff">
+        <p>📷 TAP TO START CAMERA</p>
+      </div>
+      <video id="cameraVideo" autoplay playsinline muted style="display:none"></video>
+      <canvas id="cameraCanvas"></canvas>
+    </div>
+
+    <div class="vision-controls">
+      <button class="vision-btn" id="camToggleBtn" onclick="toggleCamera()">📷 START</button>
+      <button class="vision-btn" onclick="analyzeCamera('describe')">👁️ DESCRIBE</button>
+      <button class="vision-btn" onclick="analyzeCamera('read')">📖 READ</button>
+      <button class="vision-btn" onclick="analyzeCamera('translate')">🌍 TRANSLATE</button>
+      <button class="vision-btn" onclick="analyzeCamera('identify')">🔍 IDENTIFY</button>
+      <button class="vision-btn" onclick="analyzeCamera('gesture')">👋 GESTURE</button>
+    </div>
+
+    <div class="vision-result" id="visionResults">
+      <div class="vision-empty" id="visionEmpty">
+        <p>START CAMERA ABOVE</p>
+        <p style="font-size:0.85em;opacity:0.6">THEN TAP A BUTTON TO ANALYZE</p>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="bottom-bar">
   <div class="mode-pill" id="translationPill">TRANSLATION OFF</div>
   <div class="timestamp" id="clock"></div>
@@ -218,7 +268,7 @@ setInterval(() => {
 }, 1000);
 
 function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['chat','contacts'][i] === tab));
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['chat','contacts','vision'][i] === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + tab).classList.add('active');
   if (tab === 'contacts') loadContacts();
@@ -389,6 +439,89 @@ async function clearAllContacts() {
   btn.textContent = '⟳ SYNC CONTACTS';
 }
 
+// Vision camera
+let cameraStream = null;
+
+async function toggleCamera() {
+  const btn = document.getElementById('camToggleBtn');
+  const video = document.getElementById('cameraVideo');
+  const off = document.getElementById('cameraOff');
+
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+    video.style.display = 'none';
+    off.style.display = 'flex';
+    btn.textContent = '📷 START';
+    return;
+  }
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    video.srcObject = cameraStream;
+    video.style.display = 'block';
+    off.style.display = 'none';
+    btn.textContent = '⏹ STOP';
+  } catch(e) {
+    // Try front camera if back fails
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = cameraStream;
+      video.style.display = 'block';
+      off.style.display = 'none';
+      btn.textContent = '⏹ STOP';
+    } catch(e2) {
+      alert('Camera access denied. Please allow camera in Safari settings.');
+    }
+  }
+}
+
+async function analyzeCamera(mode) {
+  if (!cameraStream) {
+    alert('Please start the camera first');
+    return;
+  }
+
+  const video = document.getElementById('cameraVideo');
+  const canvas = document.getElementById('cameraCanvas');
+  const results = document.getElementById('visionResults');
+  const empty = document.getElementById('visionEmpty');
+
+  // Capture frame
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+
+  // Convert to base64 (JPEG for smaller size)
+  const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+  // Show loading
+  empty.style.display = 'none';
+  const loading = document.createElement('div');
+  loading.className = 'vision-result-item';
+  loading.innerHTML = '<div class="vision-result-label">⏳ ANALYZING...</div>';
+  results.insertBefore(loading, results.firstChild);
+
+  const modeIcons = { describe:'👁️', read:'📖', translate:'🌍', identify:'🔍', gesture:'👋' };
+
+  try {
+    const res = await fetch('/api/vision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_base64: base64, mode, speaker_key: 'guille' })
+    });
+    const data = await res.json();
+    loading.innerHTML =
+      '<div class="vision-result-label">' + (modeIcons[mode] || '👁️') + ' ' + mode.toUpperCase() + '</div>' +
+      '<div class="vision-result-text">' + esc(data.result || 'No result') + '</div>';
+  } catch(e) {
+    loading.innerHTML = '<div class="vision-result-label">❌ ERROR</div><div class="vision-result-text">Analysis failed. Check connection.</div>';
+  }
+}
+
 // SSE
 function connect() {
   const es = new EventSource('/events');
@@ -436,6 +569,30 @@ function connect() {
     conv.appendChild(msg);
     scrollBottom();
     setStatus('ready');
+  });
+
+  // Vision result
+  es.addEventListener('vision', e => {
+    const d = JSON.parse(e.data);
+    hideEmpty(); removeThinking();
+    const icons = { describe: '👁️', read: '📖', translate: '🌍', identify: '🔍', gesture: '👋' };
+    const icon = icons[d.mode] || '👁️';
+    const msg = document.createElement('div');
+    msg.className = 'message kai';
+    msg.innerHTML = '<div class="message-label" style="color:rgba(79,195,247,0.8)">' + icon + ' VISION</div>' +
+      '<div class="bubble" style="border-color:rgba(79,195,247,0.3);white-space:pre-wrap">' + esc(d.result) + '</div>';
+    conv.appendChild(msg); scrollBottom();
+  });
+
+  // Vision alert (continuous mode)
+  es.addEventListener('vision_alert', e => {
+    const d = JSON.parse(e.data);
+    hideEmpty(); removeThinking();
+    const msg = document.createElement('div');
+    msg.className = 'message kai';
+    msg.innerHTML = '<div class="message-label" style="color:rgba(255,200,100,0.8)">⚠️ VISION ALERT</div>' +
+      '<div class="bubble" style="border-color:rgba(255,200,100,0.3);color:#ffd080">' + esc(d.result) + '</div>';
+    conv.appendChild(msg); scrollBottom();
   });
 
   es.onerror = () => { setStatus('ready'); setTimeout(connect, 3000); es.close(); };
