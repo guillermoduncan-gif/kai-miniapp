@@ -34,7 +34,7 @@ type Intent =
   | { type: 'normal' };
 
 function getIntent(text: string): Intent {
-  const userOriginal = text; // keep original for reminder parsing
+  const userOriginal = text;
   let t = text.toLowerCase().trim();
   t = t.replace(/^(hey\s+kai|ok\s+kai|kai)[,!\s]+/, '').trim();
   t = t.replace(/[,!.]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -63,12 +63,10 @@ function getIntent(text: string): Intent {
     t.match(/^(?:can you |please )?call\s+(.+?)$/);
   if (phoneMatch) return { type: 'call', name: phoneMatch[1].trim(), app: 'phone' };
 
-  // Reminder commands
   if (t.includes('remind me') || t.includes('recuérdame') || t.includes('recordarme') ||
       t.startsWith('set a reminder') || t.startsWith('set reminder'))
     return { type: 'reminder', text: userOriginal };
 
-  // List reminders
   if (t.includes('my reminders') || t.includes('what are my reminders') ||
       t.includes('mis recordatorios') || t.includes('show reminders'))
     return { type: 'list_reminders' } as any;
@@ -115,10 +113,9 @@ class KaiApp extends AppServer {
       port: PORT,
     } as any);
 
-    // Register routes on the built-in Express server
     const app = (this as any).app;
 
-    // SSE
+    // ── SSE ────────────────────────────────────────────────────────────────
     app.get('/events', (req: any, res: any) => {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -131,53 +128,72 @@ class KaiApp extends AppServer {
       req.on('close', () => sseClients.delete(res));
     });
 
-    // Webview
+    // ── Webview ────────────────────────────────────────────────────────────
     app.get('/webview', (_req: any, res: any) => res.send(WEBVIEW_HTML));
     app.get('/', (_req: any, res: any) => res.send(WEBVIEW_HTML));
 
-    // Contacts proxy — GET
+    // ── Contacts proxy — GET ───────────────────────────────────────────────
     app.get('/api/contacts', async (_req: any, res: any) => {
       try {
-        const r = await fetch(`${KAI_API_URL}/contacts/guille`, { headers: { 'x-api-key': KAI_API_KEY_VAL } });
+        const r = await fetch(`${KAI_API_URL}/contacts/guille`, {
+          headers: { 'x-api-key': KAI_API_KEY_VAL },
+        });
         res.json(await r.json());
-      } catch { res.status(500).json({ contacts: [] }); }
+      } catch {
+        res.status(500).json({ contacts: [] });
+      }
     });
 
-    // Contacts proxy — DELETE all
+    // ── Contacts proxy — DELETE all ────────────────────────────────────────
     app.delete('/api/contacts', async (_req: any, res: any) => {
       try {
-        const r = await fetch(`${KAI_API_URL}/contacts/guille`, { method: 'DELETE', headers: { 'x-api-key': KAI_API_KEY_VAL } });
+        const r = await fetch(`${KAI_API_URL}/contacts/guille`, {
+          method: 'DELETE',
+          headers: { 'x-api-key': KAI_API_KEY_VAL },
+        });
         res.status(r.status).json(await r.json());
-      } catch { res.status(500).json({ error: 'Failed' }); }
+      } catch {
+        res.status(500).json({ error: 'Failed' });
+      }
     });
 
-    // Contacts proxy — DELETE single
+    // ── Contacts proxy — DELETE single ─────────────────────────────────────
     app.delete('/api/contacts/:id', async (req: any, res: any) => {
       try {
-        await fetch(`${KAI_API_URL}/contacts/guille/${req.params.id}`, { method: 'DELETE', headers: { 'x-api-key': KAI_API_KEY_VAL } });
+        await fetch(`${KAI_API_URL}/contacts/guille/${req.params.id}`, {
+          method: 'DELETE',
+          headers: { 'x-api-key': KAI_API_KEY_VAL },
+        });
         res.json({ status: 'deleted' });
-      } catch { res.status(500).json({ error: 'Failed' }); }
+      } catch {
+        res.status(500).json({ error: 'Failed' });
+      }
     });
 
-    // Vision proxy — phone/webview camera
+    // ── Vision proxy — phone/webview camera ────────────────────────────────
+    // FIX: Express body-parser already consumes the stream before req.on('data')
+    // fires on JSON requests. Use req.body directly instead of manual chunking.
     app.post('/api/vision', async (req: any, res: any) => {
-      const chunks: Buffer[] = [];
-      req.on('data', (chunk: Buffer) => chunks.push(chunk));
-      req.on('end', async () => {
-        try {
-          const body = JSON.parse(Buffer.concat(chunks).toString());
-          const r = await fetch(`${KAI_API_URL}/vision/analyze`, {
-            method: 'POST',
-            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-          });
-          const data = await r.json();
-          res.json(data);
-        } catch (e) { res.status(500).json({ error: 'Vision failed' }); }
-      });
+      try {
+        const r = await fetch(`${KAI_API_URL}/vision/analyze`, {
+          method: 'POST',
+          headers: {
+            'x-api-key': KAI_API_KEY_VAL,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(req.body),
+        });
+        const data = await r.json();
+        res.json(data);
+      } catch (e) {
+        console.error('Vision proxy error:', e);
+        res.status(500).json({ error: 'Vision failed' });
+      }
     });
 
-    // Contacts proxy — vCard sync
+    // ── Contacts proxy — vCard sync ────────────────────────────────────────
+    // Kept with manual chunking: multipart/form-data is NOT parsed by Express
+    // body-parser, so manual stream reading is correct here.
     app.post('/api/contacts/sync', async (req: any, res: any) => {
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -186,11 +202,17 @@ class KaiApp extends AppServer {
           const body = Buffer.concat(chunks);
           const r = await fetch(`${KAI_API_URL}/contacts/guille/sync`, {
             method: 'POST',
-            headers: { 'x-api-key': KAI_API_KEY_VAL, 'content-type': req.headers['content-type'] || '', 'content-length': body.length.toString() },
+            headers: {
+              'x-api-key': KAI_API_KEY_VAL,
+              'content-type': req.headers['content-type'] || '',
+              'content-length': body.length.toString(),
+            },
             body,
           });
           res.status(r.status).json(await r.json());
-        } catch { res.status(500).json({ error: 'Sync failed' }); }
+        } catch {
+          res.status(500).json({ error: 'Sync failed' });
+        }
       });
     });
   }
@@ -202,7 +224,7 @@ class KaiApp extends AppServer {
     broadcast('session_start', { clear: true });
     broadcast('status', { state: 'ready', translation_mode: false });
 
-    // Clear Redis
+    // Clear Redis session
     try {
       await fetch(`${KAI_API_URL}/session/clear`, {
         method: 'POST',
@@ -210,12 +232,14 @@ class KaiApp extends AppServer {
         body: JSON.stringify({ session_id: sessionId }),
       });
       console.log('🧹 Redis session cleared');
-    } catch (e) { console.warn('Redis clear failed:', e); }
+    } catch (e) {
+      console.warn('Redis clear failed:', e);
+    }
 
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
 
-    // Incoming call notifications
+    // ── Incoming call notifications ────────────────────────────────────────
     try {
       session.events.onPhoneNotifications((notification: any) => {
         console.log('🔔 RAW notification:', JSON.stringify(notification));
@@ -235,10 +259,11 @@ class KaiApp extends AppServer {
         }
       });
       console.log('✅ onPhoneNotifications registered');
-    } catch (e) { console.log('⚠️ onPhoneNotifications error:', e); }
+    } catch (e) {
+      console.log('⚠️ onPhoneNotifications error:', e);
+    }
 
-    // ── Continuous vision mode ───────────────────────────────────────────
-    // Analyzes scene every 30 seconds, only alerts on notable things
+    // ── Continuous vision mode ─────────────────────────────────────────────
     const startContinuousVision = () => {
       const interval = setInterval(async () => {
         try {
@@ -260,15 +285,15 @@ class KaiApp extends AppServer {
             setTimeout(() => session.layouts.showTextWall(''), 8000);
             console.log(`👁️ Vision alert: ${data.result}`);
           }
-        } catch (e) {
+        } catch {
           // Silent fail for continuous mode
         }
-      }, 30000); // Every 30 seconds
+      }, 30000);
       continuousModeMap.set(sessionId, interval);
       console.log('✅ Continuous vision started');
     };
 
-    // Clean up on session end
+    // ── Clean up on session end ────────────────────────────────────────────
     session.events.onDisconnected?.(() => {
       const interval = continuousModeMap.get(sessionId);
       if (interval) { clearInterval(interval); continuousModeMap.delete(sessionId); }
@@ -276,6 +301,7 @@ class KaiApp extends AppServer {
       console.log('🔴 Session ended, cleaned up');
     });
 
+    // ── Transcription handler ──────────────────────────────────────────────
     const transcriptionHandler = async (data: any) => {
       const userText = (data.text || '').trim();
       if (!userText || userText.length < 2) return;
@@ -295,6 +321,7 @@ class KaiApp extends AppServer {
       const intent = getIntent(userText);
       console.log(`   → ${intent.type}`);
 
+      // ── Test call ──────────────────────────────────────────────────────
       if (intent.type === 'test_call') {
         const msg = `📞 Incoming: ${(intent as any).name}`;
         await session.layouts.showTextWall(msg);
@@ -304,6 +331,7 @@ class KaiApp extends AppServer {
         return;
       }
 
+      // ── Toggle translation ─────────────────────────────────────────────
       if (intent.type === 'toggle_translation') {
         translationModeMap.set(sessionId, intent.on);
         const msg = intent.on ? '🌍 Translation mode ON' : '🔇 Translation mode OFF';
@@ -314,6 +342,7 @@ class KaiApp extends AppServer {
         return;
       }
 
+      // ── Call ───────────────────────────────────────────────────────────
       if (intent.type === 'call') {
         broadcast('user', { text: userText });
         broadcast('status', { state: 'calling' });
@@ -327,7 +356,6 @@ class KaiApp extends AppServer {
           return;
         }
         const app = intent.app !== 'phone' ? intent.app : (contact.default_app as any || 'phone');
-        const appNames: Record<string, string> = { phone: 'Phone', whatsapp: 'WhatsApp', facetime: 'FaceTime' };
         const msg = `📞 Calling ${contact.name}...`;
         await session.layouts.showTextWall(msg);
         broadcast('direct_call', { contact, app });
@@ -336,7 +364,7 @@ class KaiApp extends AppServer {
         return;
       }
 
-      // ── Reminder ────────────────────────────────────────────────────────
+      // ── Reminder ───────────────────────────────────────────────────────
       if (intent.type === 'reminder') {
         broadcast('user', { text: userText });
         broadcast('status', { state: 'thinking' });
@@ -359,7 +387,6 @@ class KaiApp extends AppServer {
             broadcast('status', { state: 'ready' });
             return;
           }
-          // Save the reminder
           await fetch(`${KAI_API_URL}/reminders/`, {
             method: 'POST',
             headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
@@ -375,7 +402,7 @@ class KaiApp extends AppServer {
           broadcast('reply', { text: msg });
           broadcast('status', { state: 'ready' });
           setTimeout(() => session.layouts.showTextWall(''), 8000);
-        } catch (e) {
+        } catch {
           const msg = 'Failed to set reminder. Try again.';
           await session.layouts.showTextWall(msg);
           broadcast('reply', { text: msg });
@@ -384,7 +411,7 @@ class KaiApp extends AppServer {
         return;
       }
 
-      // ── List reminders ───────────────────────────────────────────────────
+      // ── List reminders ─────────────────────────────────────────────────
       if ((intent as any).type === 'list_reminders') {
         broadcast('user', { text: userText });
         try {
@@ -411,7 +438,7 @@ class KaiApp extends AppServer {
         return;
       }
 
-      // ── Vision ──────────────────────────────────────────────────────────
+      // ── Vision ─────────────────────────────────────────────────────────
       if (intent.type === 'vision') {
         broadcast('user', { text: userText });
         broadcast('status', { state: 'thinking' });
@@ -424,7 +451,6 @@ class KaiApp extends AppServer {
         };
         await session.layouts.showTextWall(modeLabels[intent.mode] || '👁️ Analyzing...');
 
-        // Handle continuous mode toggle
         if (intent.mode === 'continuous_on') {
           if (!continuousModeMap.has(sessionId)) startContinuousVision();
           const msg = "👁️ Continuous vision ON — I'll alert you to important things";
@@ -444,7 +470,6 @@ class KaiApp extends AppServer {
         }
 
         try {
-          // Capture photo from glasses
           const photo = await (session as any).camera.requestPhoto({ size: 'medium' });
           if (!photo || !photo.data) {
             const msg = 'Could not capture photo. Make sure camera permission is enabled.';
@@ -454,12 +479,10 @@ class KaiApp extends AppServer {
             return;
           }
 
-          // Convert to base64
           const base64 = Buffer.isBuffer(photo.data)
             ? photo.data.toString('base64')
             : Buffer.from(photo.data).toString('base64');
 
-          // Send to vision API
           const visionRes = await fetch(`${KAI_API_URL}/vision/analyze`, {
             method: 'POST',
             headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
@@ -481,8 +504,8 @@ class KaiApp extends AppServer {
 
         } catch (e: any) {
           console.error('Vision error:', e);
-          const msg = e?.message?.includes('camera') 
-            ? 'Camera not available. Are you using the glasses?' 
+          const msg = e?.message?.includes('camera')
+            ? 'Camera not available. Are you using the glasses?'
             : 'Vision analysis failed. Try again.';
           await session.layouts.showTextWall(msg);
           broadcast('reply', { text: msg });
@@ -491,6 +514,7 @@ class KaiApp extends AppServer {
         return;
       }
 
+      // ── Inline translate ───────────────────────────────────────────────
       if (intent.type === 'translate') {
         broadcast('user', { text: userText });
         broadcast('status', { state: 'translating' });
@@ -515,6 +539,7 @@ class KaiApp extends AppServer {
         return;
       }
 
+      // ── Translation mode (passive) ─────────────────────────────────────
       if (translationModeMap.get(sessionId)) {
         broadcast('user', { text: userText });
         broadcast('status', { state: 'translating' });
@@ -531,6 +556,7 @@ class KaiApp extends AppServer {
         } catch {}
       }
 
+      // ── Normal AI response ─────────────────────────────────────────────
       broadcast('user', { text: userText });
       broadcast('status', { state: 'thinking' });
       await session.layouts.showTextWall('KAI is thinking...');
