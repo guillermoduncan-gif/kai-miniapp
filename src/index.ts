@@ -419,7 +419,7 @@ class KaiApp extends AppServer {
         // Handle continuous mode toggle
         if (intent.mode === 'continuous_on') {
           if (!continuousModeMap.has(sessionId)) startContinuousVision();
-          const msg = '👁️ Continuous vision ON — I'll alert you to important things';
+          const msg = "👁️ Continuous vision ON — I'll alert you to important things";
           await session.layouts.showTextWall(msg);
           broadcast('reply', { text: msg });
           broadcast('status', { state: 'ready' });
