@@ -55,7 +55,7 @@ type Intent =
 // ── KAI prefix detection ───────────────────────────────────────────────────
 function parsePrefix(text: string): { addressed: boolean; cleaned: string } {
   const raw = text.toLowerCase().trim();
-  const kaiPrefix = /^(hey\s+kai|ok\s+kai|oye\s+kai|kai)[,!\s]+/;
+  const kaiPrefix = /^(hey\s+kai|ok\s+kai|oye\s+kai|kai|hey\s+guy|ok\s+guy|guy|ky|ki|gai|kay)[,!\s]+/;
   if (kaiPrefix.test(raw)) {
     return {
       addressed: true,
