@@ -26,6 +26,28 @@ const listeningModeMap = new Map<string, boolean>();
 const listeningBufferMap = new Map<string, string[]>();
 const coachIntervalMap = new Map<string, ReturnType<typeof setInterval>>();
 
+// ── Weather conversation context ──────────────────────────────────────────
+// Remembers last weather query so follow-ups like "what about next week"
+// or "and in Mexico?" inherit the previous location/time
+interface WeatherContext { location?: string; time_ref?: string; }
+const weatherContextMap = new Map<string, WeatherContext>();
+
+// Ambiguous city names that need country clarification
+const AMBIGUOUS_CITIES: Record<string, string[]> = {
+  'san jose': ['Costa Rica', 'California (USA)', 'El Salvador'],
+  'san josé': ['Costa Rica', 'California (USA)', 'El Salvador'],
+  'santiago': ['Chile', 'Dominican Republic', 'Spain'],
+  'córdoba': ['Argentina', 'Spain'],
+  'cordoba': ['Argentina', 'Spain'],
+  'granada': ['Spain', 'Nicaragua'],
+  'cartagena': ['Colombia', 'Spain'],
+  'santa cruz': ['Bolivia', 'Argentina', 'Spain'],
+  'monterrey': ['Mexico', 'Colombia'],
+  'lima': ['Peru', 'Ohio (USA)'],
+  'victoria': ['Australia', 'Canada', 'Mexico'],
+  'springfield': ['Illinois (USA)', 'Missouri (USA)', 'Ohio (USA)'],
+};
+
 // ── Time reference extractor ───────────────────────────────────────────────
 function _extractTimeRef(t: string): string {
   if (t.includes('next week') || t.includes('la próxima semana')) return 'next week';
@@ -82,6 +104,13 @@ function getIntent(text: string): Intent {
       const timeRef = _extractTimeRef(t);
       return { type: 'weather', location: locMatch?.[1]?.trim(), time_ref: timeRef };
     }
+
+    // ── Weather follow-up — inherit context from previous query ──────────
+    // "what about next week", "and tomorrow?", "and in Mexico?", "mañana?"
+    const hasTimeOnly = /^(next\s+week|tomorrow|tonight|this\s+weekend|this\s+week|mañana|la\s+próxima\s+semana|pasado\s+mañana|day\s+after\s+tomorrow)$/.test(t);
+    const hasLocFollowup = t.match(/^(?:what\s+about|and|how\s+about|y(?:\s+en)?(?:\s+el)?(?:\s+la)?)\s+(?:in\s+|en\s+)?([a-zA-ZÀ-ÿ\s]+)\??$/);
+    if (hasTimeOnly) return { type: 'weather', location: undefined, time_ref: t };
+    if (hasLocFollowup) return { type: 'weather', location: hasLocFollowup[1].trim(), time_ref: undefined };
 
     // ── Navigation — explicit commands ───────────────────────────────────
     const navExplicit =
@@ -274,6 +303,7 @@ class KaiApp extends AppServer {
     translationModeMap.set(sessionId, false);
     listeningModeMap.set(sessionId, false);
     listeningBufferMap.set(sessionId, []);
+    weatherContextMap.set(sessionId, {});
     broadcast('session_start', { clear: true });
     broadcast('status', { state: 'ready', translation_mode: false, listening_mode: false });
 
@@ -360,6 +390,7 @@ class KaiApp extends AppServer {
       translationModeMap.delete(sessionId);
       listeningModeMap.delete(sessionId);
       listeningBufferMap.delete(sessionId);
+      weatherContextMap.delete(sessionId);
       console.log('🔴 Session ended, cleaned up');
     });
 
@@ -418,20 +449,48 @@ class KaiApp extends AppServer {
       if (intent.type === 'weather') {
         broadcast('user', { text: userText });
         broadcast('status', { state: 'thinking' });
-        const timeRef = (intent as any).time_ref || 'today';
+
+        // Get previous context for follow-up queries
+        const prevCtx = weatherContextMap.get(sessionId) || {};
+
+        // Merge: use new value if provided, else inherit from previous
+        let location = (intent as any).location || prevCtx.location;
+        let timeRef = (intent as any).time_ref || prevCtx.time_ref || 'today';
+
+        // If still no location, use default
+        if (!location) location = 'San José, Costa Rica';
+
+        // Check if city is ambiguous — ask for clarification
+        const locLower = location.toLowerCase().trim();
+        const ambigOptions = AMBIGUOUS_CITIES[locLower];
+        if (ambigOptions && !(intent as any).location?.includes(',')) {
+          // Ask for clarification — don't call weather API yet
+          const options = ambigOptions.map((o, i) => `${i + 1}. ${o}`).join(', ');
+          const msg = `Which ${location} do you mean? ${options}`;
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          // Save partial context so next reply completes it
+          weatherContextMap.set(sessionId, { location, time_ref: timeRef });
+          return;
+        }
+
         const timeLabel = timeRef === 'today' ? '' : ` for ${timeRef}`;
         await session.layouts.showTextWall(`🌤️ Checking weather${timeLabel}...`);
+
         try {
           const res = await fetch(`${KAI_API_URL}/weather`, {
             method: 'POST',
             headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ speaker_key: speakerKey, location: (intent as any).location, time_ref: timeRef }),
+            body: JSON.stringify({ speaker_key: speakerKey, location, time_ref: timeRef }),
           });
           const weatherData = await res.json() as any;
           const msg = weatherData.summary || 'Could not get weather.';
           await session.layouts.showTextWall(msg);
           broadcast('reply', { text: msg });
           broadcast('status', { state: 'ready' });
+          // Save context for follow-up queries
+          weatherContextMap.set(sessionId, { location, time_ref: timeRef });
           setTimeout(() => session.layouts.showTextWall(''), 12000);
         } catch {
           const msg = 'Weather unavailable. Try again.';

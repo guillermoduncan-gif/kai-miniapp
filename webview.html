@@ -290,15 +290,33 @@ function clearConversation() {
 }
 function esc(t) { return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+// ── Markdown renderer — converts **bold**, *italic*, ### headers, bullet lists ──
+function renderMd(text) {
+  let t = esc(text);
+  // Headers: ### H3, ## H2, # H1
+  t = t.replace(/^### (.+)$/gm, '<strong style="font-size:1.05em;color:var(--gold)">$1</strong>');
+  t = t.replace(/^## (.+)$/gm, '<strong style="font-size:1.1em;color:var(--gold)">$1</strong>');
+  t = t.replace(/^# (.+)$/gm, '<strong style="font-size:1.15em;color:var(--gold)">$1</strong>');
+  // Bold: **text**
+  t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic: *text*
+  t = t.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // Bullet lists: - item or * item
+  t = t.replace(/^[-*] (.+)$/gm, '• $1');
+  // Line breaks
+  t = t.replace(/\n/g, '<br>');
+  return t;
+}
+
 function addMessage(type, text, extra) {
   hideEmpty(); removeThinking();
   const msg = document.createElement('div');
   msg.className = 'message ' + type;
   if (type === 'user') msg.innerHTML = '<div class="message-label">YOU</div><div class="bubble">' + esc(text) + '</div>';
-  else if (type === 'kai') msg.innerHTML = '<div class="message-label">KAI</div><div class="bubble">' + esc(text) + '</div>';
+  else if (type === 'kai') msg.innerHTML = '<div class="message-label">KAI</div><div class="bubble" style="white-space:normal">' + renderMd(text) + '</div>';
   else if (type === 'translation') {
     const tag = extra ? '<div class="translation-tag">' + esc(extra) + ' → EN</div>' : '';
-    msg.innerHTML = '<div class="message-label">TRANSLATION</div><div class="bubble">' + tag + esc(text) + '</div>';
+    msg.innerHTML = '<div class="message-label">TRANSLATION</div><div class="bubble">' + tag + renderMd(text) + '</div>';
   } else if (type === 'call') {
     msg.innerHTML = '<div class="message-label">CALLING</div><div class="bubble">' + esc(text) + '</div>';
   }
