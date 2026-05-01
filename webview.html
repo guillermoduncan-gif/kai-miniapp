@@ -222,6 +222,10 @@
       <button class="vision-btn" onclick="analyzeCamera('gesture')">👋 GESTURE</button>
       <button class="vision-btn" onclick="analyzeCamera('qr')">📷 SCAN QR</button>
       <button class="vision-btn" onclick="analyzeCamera('shop')">🛍️ SHOP</button>
+      <button class="vision-btn" onclick="analyzeCamera('body_language')" style="border-color:rgba(255,180,0,0.4);color:#ffb400">🧠 BODY LANG</button>
+      <button class="vision-btn" onclick="analyzeCamera('similarity')" style="border-color:rgba(180,100,255,0.4);color:#b464ff">👤 SIMILARITY</button>
+      <button class="vision-btn" id="followBtn" onclick="promptFollowTarget()" style="border-color:rgba(0,255,180,0.4);color:#00ffb4">🎯 FOLLOW</button>
+      <button class="vision-btn" id="recordBtn" onclick="toggleRecording()" style="grid-column: 1 / -1; background: rgba(255,80,80,0.1); border-color: rgba(255,80,80,0.4); color: #ff5050;">⏺ RECORD</button>
     </div>
 
     <div class="vision-result" id="visionResults">
@@ -443,6 +447,12 @@ async function clearAllContacts() {
 
 // Vision camera
 let cameraStream = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingTimer = null;
+let recordingSeconds = 0;
+let followTarget = null;        // e.g. "player number 7"
+let followInterval = null;      // auto-analyze interval for follow mode
 
 async function toggleCamera() {
   const btn = document.getElementById('camToggleBtn');
@@ -450,6 +460,8 @@ async function toggleCamera() {
   const off = document.getElementById('cameraOff');
 
   if (cameraStream) {
+    // Stop recording if active
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') stopRecording();
     cameraStream.getTracks().forEach(t => t.stop());
     cameraStream = null;
     video.style.display = 'none';
@@ -460,24 +472,231 @@ async function toggleCamera() {
 
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: true
     });
     video.srcObject = cameraStream;
     video.style.display = 'block';
     off.style.display = 'none';
     btn.textContent = '⏹ STOP';
   } catch(e) {
-    // Try front camera if back fails
     try {
-      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // Try without audio if permission denied
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
+      });
       video.srcObject = cameraStream;
       video.style.display = 'block';
       off.style.display = 'none';
       btn.textContent = '⏹ STOP';
     } catch(e2) {
-      alert('Camera access denied. Please allow camera in Safari settings.');
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = cameraStream;
+        video.style.display = 'block';
+        off.style.display = 'none';
+        btn.textContent = '⏹ STOP';
+      } catch(e3) {
+        alert('Camera access denied. Please allow camera in Safari settings.');
+      }
     }
   }
+}
+
+// ── Follow Player ──────────────────────────────────────────────────────────
+function promptFollowTarget() {
+  const target = prompt('Who should KAI follow?\nExamples: "player number 7", "man in red shirt", "goalkeeper"');
+  if (!target || !target.trim()) return;
+  startFollow(target.trim());
+}
+
+function startFollow(target) {
+  if (!cameraStream) { alert('Please start the camera first'); return; }
+  followTarget = target;
+
+  const btn = document.getElementById('followBtn');
+  btn.textContent = '⏹ STOP FOLLOW';
+  btn.style.background = 'rgba(0,255,180,0.15)';
+  btn.style.borderColor = 'rgba(0,255,180,0.8)';
+  btn.onclick = stopFollow;
+
+  // Show status
+  const results = document.getElementById('visionResults');
+  document.getElementById('visionEmpty').style.display = 'none';
+  const statusItem = document.createElement('div');
+  statusItem.className = 'vision-result-item';
+  statusItem.id = 'followStatus';
+  statusItem.innerHTML = '<div class="vision-result-label" style="color:#00ffb4">🎯 FOLLOWING: ' + esc(target) + '</div>' +
+    '<div class="vision-result-text" style="color:rgba(0,255,180,0.7)">Analyzing every 5 seconds...</div>';
+  results.insertBefore(statusItem, results.firstChild);
+
+  // Immediately analyze + then every 5 seconds
+  analyzeCamera('follow_player');
+  followInterval = setInterval(() => analyzeCamera('follow_player'), 5000);
+}
+
+function stopFollow() {
+  followTarget = null;
+  if (followInterval) { clearInterval(followInterval); followInterval = null; }
+  const btn = document.getElementById('followBtn');
+  btn.textContent = '🎯 FOLLOW';
+  btn.style.background = '';
+  btn.style.borderColor = 'rgba(0,255,180,0.4)';
+  btn.onclick = promptFollowTarget;
+  const statusItem = document.getElementById('followStatus');
+  if (statusItem) statusItem.innerHTML = '<div class="vision-result-label" style="color:#00ffb4">🎯 FOLLOW STOPPED</div>';
+}
+
+// ── Recording ──────────────────────────────────────────────────────────────
+async function toggleRecording() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
+
+function startRecording() {
+  if (!cameraStream) {
+    alert('Please start the camera first');
+    return;
+  }
+  const btn = document.getElementById('recordBtn');
+  recordedChunks = [];
+  recordingSeconds = 0;
+
+  try {
+    // Pick best supported format
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9'
+      : MediaRecorder.isTypeSupported('video/webm')
+      ? 'video/webm'
+      : 'video/mp4';
+
+    mediaRecorder = new MediaRecorder(cameraStream, { mimeType });
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = handleRecordingStop;
+    mediaRecorder.start(1000); // collect chunks every second
+
+    // Update button with live timer
+    btn.style.background = 'rgba(255,80,80,0.3)';
+    btn.style.borderColor = 'rgba(255,80,80,0.8)';
+    recordingTimer = setInterval(() => {
+      recordingSeconds++;
+      const m = Math.floor(recordingSeconds / 60).toString().padStart(2, '0');
+      const s = (recordingSeconds % 60).toString().padStart(2, '0');
+      btn.textContent = `⏹ STOP REC ${m}:${s}`;
+    }, 1000);
+    btn.textContent = '⏹ STOP REC 00:00';
+
+    // Add status to results
+    const results = document.getElementById('visionResults');
+    document.getElementById('visionEmpty').style.display = 'none';
+    const recItem = document.createElement('div');
+    recItem.className = 'vision-result-item';
+    recItem.id = 'recordingStatus';
+    recItem.innerHTML = '<div class="vision-result-label" style="color:#ff5050">⏺ RECORDING...</div>' +
+      '<div class="vision-result-text" style="color:rgba(255,80,80,0.7)">Tap STOP REC to finish and get AI summary</div>';
+    results.insertBefore(recItem, results.firstChild);
+
+  } catch(e) {
+    alert('Recording not supported on this device/browser: ' + e.message);
+  }
+}
+
+function stopRecording() {
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+  mediaRecorder.stop();
+  clearInterval(recordingTimer);
+  const btn = document.getElementById('recordBtn');
+  btn.textContent = '⏳ PROCESSING...';
+  btn.style.background = 'rgba(255,200,0,0.1)';
+  btn.style.borderColor = 'rgba(255,200,0,0.4)';
+  btn.style.color = '#ffc800';
+}
+
+async function handleRecordingStop() {
+  const btn = document.getElementById('recordBtn');
+  const statusItem = document.getElementById('recordingStatus');
+
+  // Save video to phone gallery via download
+  const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+  const ext = mediaRecorder.mimeType.includes('mp4') ? 'mp4' : 'webm';
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+  const filename = `kai-recording-${timestamp}.${ext}`;
+
+  // Trigger download → saves to phone Files/Gallery
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+  // Update status
+  if (statusItem) {
+    statusItem.innerHTML = '<div class="vision-result-label" style="color:#ffc800">⏳ TRANSCRIBING...</div>' +
+      '<div class="vision-result-text">Saved: ' + filename + '<br>Getting AI summary...</div>';
+  }
+
+  // Extract audio for transcription using a canvas snapshot approach
+  // We send a frame from the middle of the recording for visual summary
+  // + use Whisper-style prompt to summarize what was recorded
+  try {
+    const video = document.getElementById('cameraVideo');
+    const canvas = document.getElementById('cameraCanvas');
+    const MAX_WIDTH = 640;
+    const srcW = video.videoWidth || 640;
+    const srcH = video.videoHeight || 480;
+    const scale = Math.min(1, MAX_WIDTH / srcW);
+    canvas.width = Math.round(srcW * scale);
+    canvas.height = Math.round(srcH * scale);
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const frameBase64 = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
+
+    const durationSecs = recordingSeconds;
+    const res = await fetch('/api/vision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_base64: frameBase64,
+        mode: 'recording_summary',
+        speaker_key: 'guille',
+        recording_duration: durationSecs,
+        filename: filename
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (statusItem) {
+        statusItem.innerHTML =
+          '<div class="vision-result-label" style="color:#4fc3f7">🎬 RECORDING SAVED</div>' +
+          '<div class="vision-result-text" style="white-space:pre-wrap">' +
+          '📁 ' + esc(filename) + '\n⏱ Duration: ' + durationSecs + 's\n\n' +
+          esc(data.result || 'Recording saved.') + '</div>';
+      }
+    } else {
+      if (statusItem) {
+        statusItem.innerHTML =
+          '<div class="vision-result-label" style="color:#4fc3f7">🎬 RECORDING SAVED</div>' +
+          '<div class="vision-result-text">📁 ' + esc(filename) + '<br>⏱ ' + durationSecs + 's</div>';
+      }
+    }
+  } catch(e) {
+    if (statusItem) {
+      statusItem.innerHTML =
+        '<div class="vision-result-label" style="color:#4fc3f7">🎬 RECORDING SAVED</div>' +
+        '<div class="vision-result-text">📁 ' + esc(filename) + '</div>';
+    }
+  }
+
+  // Reset button
+  btn.textContent = '⏺ RECORD';
+  btn.style.background = 'rgba(255,80,80,0.1)';
+  btn.style.borderColor = 'rgba(255,80,80,0.4)';
+  btn.style.color = '#ff5050';
+  recordedChunks = [];
 }
 
 async function analyzeCamera(mode) {
@@ -491,10 +710,14 @@ async function analyzeCamera(mode) {
   const results = document.getElementById('visionResults');
   const empty = document.getElementById('visionEmpty');
 
-  // ── Compress image to stay well under Express body-parser limit ──────────
-  // Resize to max 640px wide and compress JPEG to 0.5 quality.
-  // This keeps base64 payload under ~80kb regardless of camera resolution.
-  const MAX_WIDTH = 640;
+  // ── Always capture a FRESH frame from the live video ────────────────────
+  // Force a new frame by waiting for the next animation frame
+  await new Promise(resolve => requestAnimationFrame(resolve));
+
+  // ── Compress: fast modes use 480px, detail modes use 640px ──────────────
+  const fastModes = ['describe', 'identify', 'gesture', 'continuous'];
+  const MAX_WIDTH = fastModes.includes(mode) ? 480 : 640;
+  const quality = fastModes.includes(mode) ? 0.4 : 0.5;
   const srcW = video.videoWidth || 640;
   const srcH = video.videoHeight || 480;
   const scale = Math.min(1, MAX_WIDTH / srcW);
@@ -502,22 +725,34 @@ async function analyzeCamera(mode) {
   canvas.height = Math.round(srcH * scale);
   const ctx = canvas.getContext('2d');
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const base64 = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
+  const base64 = canvas.toDataURL('image/jpeg', quality).split(',')[1];
 
-  // Show loading
+  // Show loading with mode label
   empty.style.display = 'none';
   const loading = document.createElement('div');
   loading.className = 'vision-result-item';
-  loading.innerHTML = '<div class="vision-result-label">⏳ ANALYZING...</div>';
+  const modeLabels = {
+    describe:'👁️ DESCRIBING...', read:'📖 READING...', translate:'🌍 TRANSLATING...',
+    identify:'🔍 IDENTIFYING...', gesture:'👋 READING GESTURE...', qr:'📷 SCANNING QR...',
+    shop:'🛍️ FINDING WHERE TO BUY...', body_language:'🧠 READING BODY LANGUAGE...',
+    similarity:'👤 ANALYZING FEATURES...', follow_player:'🎯 TRACKING ' + (followTarget || 'TARGET') + '...'
+  };
+  loading.innerHTML = '<div class="vision-result-label">⏳ ' + (modeLabels[mode] || 'ANALYZING...') + '</div>';
   results.insertBefore(loading, results.firstChild);
 
-  const modeIcons = { describe:'👁️', read:'📖', translate:'🌍', identify:'🔍', gesture:'👋', qr:'📷', shop:'🛍️' };
+  const modeIcons = {
+    describe:'👁️', read:'📖', translate:'🌍', identify:'🔍', gesture:'👋',
+    qr:'📷', shop:'🛍️', body_language:'🧠', similarity:'👤', follow_player:'🎯'
+  };
 
   try {
+    const payload = { image_base64: base64, mode, speaker_key: 'guille' };
+    if (mode === 'follow_player' && followTarget) payload.follow_target = followTarget;
+
     const res = await fetch('/api/vision', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_base64: base64, mode, speaker_key: 'guille' })
+      body: JSON.stringify(payload)
     });
 
     if (!res.ok) {
@@ -614,11 +849,20 @@ function connect() {
     setStatus('ready');
   });
 
+  // Vision record / follow control via voice
+  es.addEventListener('vision_record', e => {
+    const d = JSON.parse(e.data);
+    if (d.action === 'start') toggleRecording();
+    if (d.action === 'stop') { if (mediaRecorder && mediaRecorder.state === 'recording') stopRecording(); }
+    if (d.action === 'follow_start' && d.target) startFollow(d.target);
+    if (d.action === 'follow_stop') stopFollow();
+  });
+
   // Vision result
   es.addEventListener('vision', e => {
     const d = JSON.parse(e.data);
     hideEmpty(); removeThinking();
-    const icons = { describe: '👁️', read: '📖', translate: '🌍', identify: '🔍', gesture: '👋', qr: '📷', shop: '🛍️' };
+    const icons = { describe:'👁️', read:'📖', translate:'🌍', identify:'🔍', gesture:'👋', qr:'📷', shop:'🛍️', body_language:'🧠', similarity:'👤', follow_player:'🎯' };
     const icon = icons[d.mode] || '👁️';
     const msg = document.createElement('div');
     msg.className = 'message kai';

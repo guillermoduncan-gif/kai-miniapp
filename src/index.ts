@@ -110,6 +110,38 @@ function getIntent(text: string): Intent {
       t.includes('purchase this') || t.includes('shop online'))
     return { type: 'vision', mode: 'shop' };
 
+  // Body language
+  if (t.includes('read body language') || t.includes('body language') ||
+      t.includes('how do they feel') || t.includes('are they lying') ||
+      t.includes('what are they feeling') || t.includes('leer lenguaje corporal') ||
+      t.includes('están mintiendo') || t.includes('como se siente'))
+    return { type: 'vision', mode: 'body_language' };
+
+  // Similarity
+  if (t.includes('who do they look like') || t.includes('who does he look like') ||
+      t.includes('who does she look like') || t.includes('find similar') ||
+      t.includes('look alike') || t.includes('twins') || t.includes('resembles') ||
+      t.includes('parecido a') || t.includes('se parece a') || t.includes('gemelos'))
+    return { type: 'vision', mode: 'similarity' };
+
+  // Follow player
+  const followMatch = t.match(/follow (?:player\s*)?(?:number\s*)?(.+)/) ||
+    t.match(/track (?:player\s*)?(?:number\s*)?(.+)/) ||
+    t.match(/seguir (?:al\s+)?(?:jugador\s*)?(?:número\s*)?(.+)/);
+  if (followMatch) return { type: 'vision', mode: 'follow_player', query: followMatch[1].trim() };
+
+  if (t.includes('stop following') || t.includes('stop tracking') ||
+      t.includes('dejar de seguir'))
+    return { type: 'vision', mode: 'follow_stop' };
+
+  // Recording
+  if (t.includes('start recording') || t.includes('record this') ||
+      t.includes('start record') || t.includes('grabar') || t.includes('empezar a grabar'))
+    return { type: 'vision', mode: 'record_start' };
+  if (t.includes('stop recording') || t.includes('stop record') ||
+      t.includes('parar grabacion') || t.includes('detener grabacion'))
+    return { type: 'vision', mode: 'record_stop' };
+
   if (/^translate\s+\S+/i.test(t))
     return { type: 'translate', text: t.replace(/^translate\s+/i, '') };
 
@@ -466,6 +498,8 @@ class KaiApp extends AppServer {
           gesture: '👋 Reading gesture...',
           qr: '📷 Scanning QR code...',
           shop: '🛍️ Finding where to buy...',
+          record_start: '⏺ Starting recording...',
+          record_stop: '⏹ Stopping recording...',
         };
         await session.layouts.showTextWall(modeLabels[intent.mode] || '👁️ Analyzing...');
 
@@ -481,6 +515,43 @@ class KaiApp extends AppServer {
           const interval = continuousModeMap.get(sessionId);
           if (interval) { clearInterval(interval); continuousModeMap.delete(sessionId); }
           const msg = '👁️ Continuous vision OFF';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          return;
+        }
+
+        // Recording — trigger webview via SSE
+        if (intent.mode === 'record_start') {
+          broadcast('vision_record', { action: 'start' });
+          const msg = '⏺ Recording started';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          return;
+        }
+        if (intent.mode === 'record_stop') {
+          broadcast('vision_record', { action: 'stop' });
+          const msg = '⏹ Recording stopped';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          return;
+        }
+
+        // Follow player — trigger webview via SSE
+        if (intent.mode === 'follow_player') {
+          const target = (intent as any).query || 'the target';
+          broadcast('vision_record', { action: 'follow_start', target });
+          const msg = `🎯 Following ${target}`;
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          return;
+        }
+        if (intent.mode === 'follow_stop') {
+          broadcast('vision_record', { action: 'follow_stop' });
+          const msg = '🎯 Stopped following';
           await session.layouts.showTextWall(msg);
           broadcast('reply', { text: msg });
           broadcast('status', { state: 'ready' });
