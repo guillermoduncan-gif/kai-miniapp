@@ -80,17 +80,25 @@ function getIntent(text: string): Intent {
     return { type: 'vision', mode: 'continuous_off' };
 
   // Vision commands
-  if (t.match(/^(what is this|what('s| is) that|describe (this|what|what i see)/))
+  if (t.startsWith('what is this') || t.startsWith('what is that') ||
+      t.startsWith("what's that") || t.startsWith('describe this') ||
+      t.startsWith('describe what') || t.startsWith('what do you see'))
     return { type: 'vision', mode: 'describe' };
-  if (t.match(/^(read this|read what|what does (this|it) say|lee esto)/))
+  if (t.startsWith('read this') || t.startsWith('read what') ||
+      t.startsWith('what does this say') || t.startsWith('what does it say') ||
+      t.startsWith('lee esto'))
     return { type: 'vision', mode: 'read' };
-  if (t.match(/^translate (what|this|what i see|what's in front)/))
+  if (t.startsWith('translate what') || t.startsWith('translate this') ||
+      t.startsWith('translate what i see'))
     return { type: 'vision', mode: 'translate' };
-  if (t.match(/^(identify|what (is|are) (this|these|that)|que es esto)/))
+  if (t.startsWith('identify') || t.startsWith('what is this') ||
+      t.startsWith('que es esto') || t.startsWith('what are these'))
     return { type: 'vision', mode: 'identify' };
-  if (t.match(/^(what gesture|gesture|read my (hand|gesture)|qué gesto)/))
+  if (t.startsWith('what gesture') || t.startsWith('gesture') ||
+      t.startsWith('read my hand') || t.startsWith('que gesto'))
     return { type: 'vision', mode: 'gesture' };
-  if (t.match(/^(look (at this|around|here)|scan (this|the room)|vision on)/))
+  if (t.startsWith('look at this') || t.startsWith('scan this') ||
+      t.startsWith('look around'))
     return { type: 'vision', mode: 'describe' };
 
   if (/^translate\s+\S+/i.test(t))
