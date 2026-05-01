@@ -714,10 +714,10 @@ async function analyzeCamera(mode) {
   // Force a new frame by waiting for the next animation frame
   await new Promise(resolve => requestAnimationFrame(resolve));
 
-  // ── Compress: fast modes use 480px, detail modes use 640px ──────────────
-  const fastModes = ['describe', 'identify', 'gesture', 'continuous'];
+  // Fast modes use smaller image, precision modes use 640px
+  const fastModes = ['describe', 'identify', 'gesture', 'continuous', 'follow_player'];
   const MAX_WIDTH = fastModes.includes(mode) ? 480 : 640;
-  const quality = fastModes.includes(mode) ? 0.4 : 0.5;
+  const quality = fastModes.includes(mode) ? 0.4 : 0.6;
   const srcW = video.videoWidth || 640;
   const srcH = video.videoHeight || 480;
   const scale = Math.min(1, MAX_WIDTH / srcW);
