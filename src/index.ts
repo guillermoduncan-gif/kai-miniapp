@@ -89,15 +89,26 @@ function getIntent(text: string): Intent {
   if (t.startsWith('translate what') || t.startsWith('translate this') ||
       t.startsWith('translate what i see'))
     return { type: 'vision', mode: 'translate' };
-  if (t.startsWith('identify') || t.startsWith('what is this') ||
-      t.startsWith('que es esto') || t.startsWith('what are these'))
+  if (t.startsWith('identify') || t.startsWith('que es esto') || t.startsWith('what are these'))
     return { type: 'vision', mode: 'identify' };
   if (t.startsWith('what gesture') || t.startsWith('gesture') ||
       t.startsWith('read my hand') || t.startsWith('que gesto'))
     return { type: 'vision', mode: 'gesture' };
-  if (t.startsWith('look at this') || t.startsWith('scan this') ||
-      t.startsWith('look around'))
+  if (t.startsWith('look at this') || t.startsWith('scan this') || t.startsWith('look around'))
     return { type: 'vision', mode: 'describe' };
+
+  // QR scan
+  if (t.includes('scan qr') || t.includes('read qr') || t.includes('qr code') ||
+      t.includes('scan code') || t.includes('escanear qr') || t.includes('scan the code'))
+    return { type: 'vision', mode: 'qr' };
+
+  // Shop / find online
+  if (t.includes('where can i buy') || t.includes('where to buy') ||
+      t.includes('find this online') || t.includes('shop this') ||
+      t.includes('buy this') || t.includes('how much does this cost') ||
+      t.includes('donde comprar') || t.includes('find online') ||
+      t.includes('purchase this') || t.includes('shop online'))
+    return { type: 'vision', mode: 'shop' };
 
   if (/^translate\s+\S+/i.test(t))
     return { type: 'translate', text: t.replace(/^translate\s+/i, '') };
@@ -114,6 +125,13 @@ class KaiApp extends AppServer {
     } as any);
 
     const app = (this as any).app;
+
+    // ── CRITICAL: Increase body size limit BEFORE routes ───────────────────
+    // Default Express limit is 100kb. A JPEG in base64 is ~1–3MB.
+    // This must come before any route that receives image data.
+    const express = require('express');
+    app.use(express.json({ limit: '10mb' }));
+    app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
     // ── SSE ────────────────────────────────────────────────────────────────
     app.get('/events', (req: any, res: any) => {
@@ -170,9 +188,8 @@ class KaiApp extends AppServer {
       }
     });
 
-    // ── Vision proxy — phone/webview camera ────────────────────────────────
-    // FIX: Express body-parser already consumes the stream before req.on('data')
-    // fires on JSON requests. Use req.body directly instead of manual chunking.
+    // ── Vision proxy ───────────────────────────────────────────────────────
+    // req.body already parsed by the JSON middleware above (limit 10mb)
     app.post('/api/vision', async (req: any, res: any) => {
       try {
         const r = await fetch(`${KAI_API_URL}/vision/analyze`, {
@@ -192,8 +209,7 @@ class KaiApp extends AppServer {
     });
 
     // ── Contacts proxy — vCard sync ────────────────────────────────────────
-    // Kept with manual chunking: multipart/form-data is NOT parsed by Express
-    // body-parser, so manual stream reading is correct here.
+    // multipart/form-data bypasses JSON body-parser, manual chunking is correct
     app.post('/api/contacts/sync', async (req: any, res: any) => {
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -448,6 +464,8 @@ class KaiApp extends AppServer {
           translate: '🌍 Translating view...',
           identify: '🔍 Identifying...',
           gesture: '👋 Reading gesture...',
+          qr: '📷 Scanning QR code...',
+          shop: '🛍️ Finding where to buy...',
         };
         await session.layouts.showTextWall(modeLabels[intent.mode] || '👁️ Analyzing...');
 
@@ -486,18 +504,15 @@ class KaiApp extends AppServer {
           const visionRes = await fetch(`${KAI_API_URL}/vision/analyze`, {
             method: 'POST',
             headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              image_base64: base64,
-              mode: intent.mode,
-              speaker_key: speakerKey,
-            }),
+            body: JSON.stringify({ image_base64: base64, mode: intent.mode, speaker_key: speakerKey }),
           });
 
           const visionData = await visionRes.json() as any;
           const result = visionData.result || 'Could not analyze image.';
 
           await session.layouts.showTextWall(result);
-          broadcast('vision', { mode: intent.mode, result, photo_size: photo.size });
+          // Pass qr_url so the webview can auto-open it
+          broadcast('vision', { mode: intent.mode, result, photo_size: photo.size, qr_url: visionData.qr_url });
           broadcast('reply', { text: result });
           broadcast('status', { state: 'ready' });
           setTimeout(() => session.layouts.showTextWall(''), 12000);

@@ -220,6 +220,8 @@
       <button class="vision-btn" onclick="analyzeCamera('translate')">🌍 TRANSLATE</button>
       <button class="vision-btn" onclick="analyzeCamera('identify')">🔍 IDENTIFY</button>
       <button class="vision-btn" onclick="analyzeCamera('gesture')">👋 GESTURE</button>
+      <button class="vision-btn" onclick="analyzeCamera('qr')">📷 SCAN QR</button>
+      <button class="vision-btn" onclick="analyzeCamera('shop')">🛍️ SHOP</button>
     </div>
 
     <div class="vision-result" id="visionResults">
@@ -505,7 +507,7 @@ async function analyzeCamera(mode) {
   loading.innerHTML = '<div class="vision-result-label">⏳ ANALYZING...</div>';
   results.insertBefore(loading, results.firstChild);
 
-  const modeIcons = { describe:'👁️', read:'📖', translate:'🌍', identify:'🔍', gesture:'👋' };
+  const modeIcons = { describe:'👁️', read:'📖', translate:'🌍', identify:'🔍', gesture:'👋', qr:'📷', shop:'🛍️' };
 
   try {
     const res = await fetch('/api/vision', {
@@ -513,10 +515,44 @@ async function analyzeCamera(mode) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image_base64: base64, mode, speaker_key: 'guille' })
     });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      loading.innerHTML = '<div class="vision-result-label">❌ ERROR ' + res.status + '</div><div class="vision-result-text">' + esc(errText) + '</div>';
+      return;
+    }
+
     const data = await res.json();
+    const resultText = data.result || 'No result';
+
+    // QR mode: auto-open URL if found
+    if (mode === 'qr' && data.qr_url) {
+      loading.innerHTML =
+        '<div class="vision-result-label">📷 QR SCANNED</div>' +
+        '<div class="vision-result-text">' + esc(resultText) + '</div>' +
+        '<a href="' + esc(data.qr_url) + '" target="_blank" style="display:block;margin-top:10px;padding:8px 12px;background:rgba(79,195,247,0.15);border:1px solid rgba(79,195,247,0.4);border-radius:6px;color:#4fc3f7;font-family:Share Tech Mono,monospace;font-size:0.7em;letter-spacing:1px;text-decoration:none;word-break:break-all;">🔗 OPEN: ' + esc(data.qr_url) + '</a>';
+      // Auto-open after short delay so user sees the result first
+      setTimeout(() => { window.open(data.qr_url, '_blank'); }, 1200);
+      return;
+    }
+
+    // Shop mode: make URLs clickable
+    if (mode === 'shop') {
+      // Convert plain URLs in result to clickable links
+      const linkedResult = esc(resultText).replace(
+        /(https?:\/\/[^\s<]+)/g,
+        '<a href="$1" target="_blank" style="color:#4fc3f7;word-break:break-all;">$1</a>'
+      );
+      loading.innerHTML =
+        '<div class="vision-result-label">🛍️ SHOP</div>' +
+        '<div class="vision-result-text" style="white-space:pre-wrap">' + linkedResult + '</div>';
+      return;
+    }
+
     loading.innerHTML =
       '<div class="vision-result-label">' + (modeIcons[mode] || '👁️') + ' ' + mode.toUpperCase() + '</div>' +
-      '<div class="vision-result-text">' + esc(data.result || 'No result') + '</div>';
+      '<div class="vision-result-text">' + esc(resultText) + '</div>';
+
   } catch(e) {
     loading.innerHTML = '<div class="vision-result-label">❌ ERROR</div><div class="vision-result-text">Analysis failed. Check connection.</div>';
   }
@@ -575,12 +611,31 @@ function connect() {
   es.addEventListener('vision', e => {
     const d = JSON.parse(e.data);
     hideEmpty(); removeThinking();
-    const icons = { describe: '👁️', read: '📖', translate: '🌍', identify: '🔍', gesture: '👋' };
+    const icons = { describe: '👁️', read: '📖', translate: '🌍', identify: '🔍', gesture: '👋', qr: '📷', shop: '🛍️' };
     const icon = icons[d.mode] || '👁️';
     const msg = document.createElement('div');
     msg.className = 'message kai';
-    msg.innerHTML = '<div class="message-label" style="color:rgba(79,195,247,0.8)">' + icon + ' VISION</div>' +
-      '<div class="bubble" style="border-color:rgba(79,195,247,0.3);white-space:pre-wrap">' + esc(d.result) + '</div>';
+
+    // QR: show clickable link + auto-open
+    if (d.mode === 'qr' && d.qr_url) {
+      msg.innerHTML = '<div class="message-label" style="color:rgba(79,195,247,0.8)">📷 QR SCANNED</div>' +
+        '<div class="bubble" style="border-color:rgba(79,195,247,0.3);white-space:pre-wrap">' + esc(d.result) + '<br><br>' +
+        '<a href="' + esc(d.qr_url) + '" target="_blank" style="color:#4fc3f7;word-break:break-all;">🔗 ' + esc(d.qr_url) + '</a></div>';
+      setTimeout(() => { window.open(d.qr_url, '_blank'); }, 1200);
+    }
+    // Shop: make URLs clickable
+    else if (d.mode === 'shop') {
+      const linkedResult = esc(d.result).replace(
+        /(https?:\/\/[^\s<]+)/g,
+        '<a href="$1" target="_blank" style="color:#4fc3f7;word-break:break-all;">$1</a>'
+      );
+      msg.innerHTML = '<div class="message-label" style="color:rgba(79,195,247,0.8)">🛍️ SHOP</div>' +
+        '<div class="bubble" style="border-color:rgba(79,195,247,0.3);white-space:pre-wrap">' + linkedResult + '</div>';
+    }
+    else {
+      msg.innerHTML = '<div class="message-label" style="color:rgba(79,195,247,0.8)">' + icon + ' VISION</div>' +
+        '<div class="bubble" style="border-color:rgba(79,195,247,0.3);white-space:pre-wrap">' + esc(d.result) + '</div>';
+    }
     conv.appendChild(msg); scrollBottom();
   });
 
