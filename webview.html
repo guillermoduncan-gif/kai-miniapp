@@ -876,7 +876,15 @@ function connectSSE() {
   if (_sseInstance) _sseInstance.close();
   const es = new EventSource('/events');
   _sseInstance = es;
-  es.onerror = () => { setStatus('ready'); setTimeout(connectSSE, 3000); };
+  es.onopen = () => {
+    console.log('✅ SSE connected');
+    setStatus('ready');
+  };
+  es.onerror = (e) => {
+    console.warn('⚠️ SSE error, reconnecting in 3s...', e);
+    setStatus('ready');
+    setTimeout(connectSSE, 3000);
+  };
   es.addEventListener('session_start', () => clearConversation());
   es.addEventListener('user', e => { addMessage('user', JSON.parse(e.data).text); showThinking(); setStatus('thinking'); });
   es.addEventListener('reply', e => { addMessage('kai', JSON.parse(e.data).text); setStatus('ready'); });
@@ -1254,12 +1262,13 @@ async function loadMemory() {
     const catIcons = { preference:'⚙️', person:'👤', fact:'📋', habit:'🔄', sport:'⚽', topic:'💡', conversation:'💬' };
     let html = '';
     Object.entries(grouped).forEach(([cat, items]) => {
-      html += `<div style="margin-bottom:12px"><div style="font-family:'Share Tech Mono',monospace;font-size:0.65em;color:var(--gold);margin-bottom:6px">${catIcons[cat]||'•'} ${cat.toUpperCase()}</div>`;
-      items.forEach((m: any) => {
-        html += `<div style="padding:4px 8px;background:rgba(240,192,64,0.05);border-radius:4px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
-          <span><strong>${esc(m.key)}</strong>: ${esc(m.value)}</span>
-          <button onclick="forgetMemory('${esc(m.key)}')" style="background:none;border:none;color:rgba(255,80,80,0.6);cursor:pointer;font-size:0.8em">✕</button>
-        </div>`;
+      html += '<div style="margin-bottom:12px"><div style="font-family:\'Share Tech Mono\',monospace;font-size:0.65em;color:var(--gold);margin-bottom:6px">' + (catIcons[cat]||'•') + ' ' + cat.toUpperCase() + '</div>';
+      items.forEach(function(m) {
+        html += '<div style="padding:4px 8px;background:rgba(240,192,64,0.05);border-radius:4px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">' +
+          '<span><strong>' + esc(m.key) + '</strong>: ' + esc(m.value) + '</span>' +
+          '<button onclick="forgetMemory(\'' + esc(m.key) + '\')" style="background:none;border:none;color:rgba(255,80,80,0.6);cursor:pointer;font-size:0.8em">✕</button>' +
+          '</div>';
+      });
       });
       html += '</div>';
     });
@@ -1292,7 +1301,7 @@ async function loadHistory() {
       return;
     }
     let html = '';
-    data.messages.forEach((m: any) => {
+    data.messages.forEach(function(m) {
       const isUser = m.role === 'user';
       const time = new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       html += `<div style="padding:6px 8px;margin-bottom:6px;border-radius:6px;background:${isUser ? 'rgba(240,192,64,0.05)' : 'rgba(79,195,247,0.05)'};border-left:2px solid ${isUser ? 'var(--gold)' : 'var(--blue)'}">

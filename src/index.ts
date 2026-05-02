@@ -33,18 +33,14 @@ interface WeatherContext { location?: string; time_ref?: string; }
 const weatherContextMap = new Map<string, WeatherContext>();
 
 // Ambiguous city names that need country clarification
+// Note: keeping list small to avoid false positives
 const AMBIGUOUS_CITIES: Record<string, string[]> = {
-  'san jose': ['Costa Rica', 'California (USA)', 'El Salvador'],
-  'san josé': ['Costa Rica', 'California (USA)', 'El Salvador'],
   'santiago': ['Chile', 'Dominican Republic', 'Spain'],
   'córdoba': ['Argentina', 'Spain'],
   'cordoba': ['Argentina', 'Spain'],
   'granada': ['Spain', 'Nicaragua'],
   'cartagena': ['Colombia', 'Spain'],
-  'santa cruz': ['Bolivia', 'Argentina', 'Spain'],
   'monterrey': ['Mexico', 'Colombia'],
-  'lima': ['Peru', 'Ohio (USA)'],
-  'victoria': ['Australia', 'Canada', 'Mexico'],
   'springfield': ['Illinois (USA)', 'Missouri (USA)', 'Ohio (USA)'],
 };
 
@@ -573,14 +569,15 @@ class KaiApp extends AppServer {
             body: JSON.stringify({ speaker_key: speakerKey, location, time_ref: timeRef }),
           });
           const weatherData = await res.json() as any;
-          const msg = weatherData.summary || 'Could not get weather.';
+          console.log(`🌤️ Weather response (${res.status}):`, JSON.stringify(weatherData).substring(0, 200));
+          const msg = weatherData.summary || weatherData.detail || 'Could not get weather.';
           await session.layouts.showTextWall(msg);
           broadcast('reply', { text: msg });
           broadcast('status', { state: 'ready' });
-          // Save context for follow-up queries
           weatherContextMap.set(sessionId, { location, time_ref: timeRef });
           setTimeout(() => session.layouts.showTextWall(''), 12000);
-        } catch {
+        } catch (e: any) {
+          console.error('❌ Weather error:', e?.message || e);
           const msg = 'Weather unavailable. Try again.';
           await session.layouts.showTextWall(msg);
           broadcast('reply', { text: msg });
