@@ -1362,10 +1362,32 @@ async function startDrivingVision() {
       canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
       const base64 = canvas.toDataURL('image/jpeg', 0.4).split(',')[1];
 
+      // Check saved language preference from memory, fallback to browser language
+      let language = 'English';
+      try {
+        const memRes = await fetch(KAI_CLOUD + '/memory/get', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': KAI_KEY },
+          body: JSON.stringify({ speaker_key: SPEAKER_KEY, category: 'preference' })
+        });
+        const memData = await memRes.json();
+        const langMem = (memData.memories || []).find(function(m) { return m.key === 'preferred_language'; });
+        if (langMem) language = langMem.value;
+        else {
+          const userLang = (navigator.language || 'en').split('-')[0].toLowerCase();
+          const langMap = { 'es': 'Spanish', 'fr': 'French', 'pt': 'Portuguese', 'de': 'German', 'it': 'Italian' };
+          language = langMap[userLang] || 'English';
+        }
+      } catch(e) {
+        const userLang = (navigator.language || 'en').split('-')[0].toLowerCase();
+        const langMap = { 'es': 'Spanish', 'fr': 'French', 'pt': 'Portuguese', 'de': 'German', 'it': 'Italian' };
+        language = langMap[userLang] || 'English';
+      }
+
       const res = await fetch('/api/vision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: base64, mode: 'driving', speaker_key: SPEAKER_KEY })
+        body: JSON.stringify({ image_base64: base64, mode: 'driving', speaker_key: SPEAKER_KEY, language: language })
       });
       const data = await res.json();
 
