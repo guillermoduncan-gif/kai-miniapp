@@ -460,11 +460,21 @@ class KaiApp extends AppServer {
 
       console.log(`\n👤 "${userText}"`);
 
-      const { addressed } = parsePrefix(userText);
+      const { addressed, cleaned } = parsePrefix(userText);
       const tLow = userText.toLowerCase().trim();
       const isPrefixFreeCommand =
         /^(call|llama|llamar|whatsapp|facetime|remind me|recuérdame|set reminder|simulate|test call)/i.test(tLow) ||
         tLow.includes('remind me') || tLow.includes('my reminders');
+
+      // Bare greeting like "Hey KAI" with nothing after — respond with a hello
+      if (addressed && cleaned.length === 0) {
+        await session.layouts.showTextWall('👋 Hey! How can I help?');
+        broadcast('user', { text: userText });
+        broadcast('reply', { text: '👋 Hey! How can I help?' });
+        broadcast('status', { state: 'ready' });
+        setTimeout(() => session.layouts.showTextWall(''), 5000);
+        return;
+      }
 
       if (!addressed && !isPrefixFreeCommand) {
         if (listeningModeMap.get(sessionId)) {

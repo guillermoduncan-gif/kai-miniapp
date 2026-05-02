@@ -870,8 +870,12 @@ async function analyzeCamera(mode) {
 
 // SSE
 function connect() {
-  const es = new EventSource('/events');
-  es.addEventListener('session_start', () => clearConversation());
+  let es;
+  function connectSSE() {
+    if (es) es.close();
+    es = new EventSource('/events');
+    es.onerror = () => { setStatus('ready'); setTimeout(connectSSE, 3000); es.close(); };
+    es.addEventListener('session_start', () => clearConversation());
   es.addEventListener('user', e => { addMessage('user', JSON.parse(e.data).text); showThinking(); setStatus('thinking'); });
   es.addEventListener('reply', e => { addMessage('kai', JSON.parse(e.data).text); setStatus('ready'); });
   es.addEventListener('translation', e => { const d = JSON.parse(e.data); addMessage('translation', d.translation, d.detected_language); setStatus('ready'); });
@@ -1142,9 +1146,9 @@ function connect() {
     conv.appendChild(msg); scrollBottom();
   });
 
-  es.onerror = () => { setStatus('ready'); setTimeout(connect, 3000); es.close(); };
+  es.onerror = () => { setStatus('ready'); setTimeout(connectSSE, 3000); es.close(); };
 }
-connect();
+connectSSE();
 // ── Memory Panel ───────────────────────────────────────────────────────────
 const KAI_CLOUD = 'https://kai-cloud-production.up.railway.app';
 const KAI_KEY = 'kai-secret-guille-2026';
