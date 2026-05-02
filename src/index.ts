@@ -81,26 +81,33 @@ type Intent =
 // ── KAI prefix detection ───────────────────────────────────────────────────
 function parsePrefix(text: string): { addressed: boolean; cleaned: string } {
   const raw = text.toLowerCase().trim();
-  const kaiPrefix = /^(hey\s+kai|ok\s+kai|oye\s+kai|kai|hey\s+guy|ok\s+guy|guy|ky|ki|gai|kay)[,!\s]+/;
-  // Also handle "Hola KAI", "Hi KAI", "Buenos días KAI" — greeting before the name
-  const kaiInMiddle = /(?:^|\s)(hey\s+kai|hola\s+kai|hi\s+kai|ok\s+kai|oye\s+kai|kai|guy|ky|ki|gai|kay)[,!\s]/i;
-  if (kaiPrefix.test(raw)) {
-    return {
-      addressed: true,
-      cleaned: raw.replace(kaiPrefix, '').replace(/[,!.]+/g, ' ').replace(/\s+/g, ' ').trim()
-    };
+
+  // All the ways KAI's name gets transcribed
+  const kaiNames = ['hey kai', 'ok kai', 'oye kai', 'hola kai', 'hi kai',
+    'buenas kai', 'buenos días kai', 'kai', 'hey guy', 'hola guy', 'hi guy',
+    'guy', 'ky', 'ki', 'gai', 'kay'];
+
+  // Check if any KAI name appears anywhere in the text
+  const found = kaiNames.find(name => {
+    // Match at start, or after common greeting words/punctuation
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|\\s|,|¿|!)${escaped}([,!.\\s]|$)`, 'i').test(raw);
+  });
+
+  if (!found) {
+    return { addressed: false, cleaned: raw.replace(/[,!.]+/g, ' ').replace(/\s+/g, ' ').trim() };
   }
-  // Handle "Hola KAI, ..." or "[greeting], KAI ..."
-  if (kaiInMiddle.test(raw)) {
-    const cleaned = raw
-      .replace(/^(hola|hi|hey|buenos\s+días|buenas|good\s+morning|good\s+evening)\s+/i, '')
-      .replace(kaiPrefix, '')
-      .replace(/[,!.]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    return { addressed: true, cleaned };
-  }
-  return { addressed: false, cleaned: raw.replace(/[,!.]+/g, ' ').replace(/\s+/g, ' ').trim() };
+
+  // Strip greeting words + KAI name to get the actual command
+  let cleaned = raw;
+  // Remove leading greetings
+  cleaned = cleaned.replace(/^(hola|hi|hey|buenos\s+días|buenas|good\s+morning|good\s+evening|oye)[,!\s]*/i, '');
+  // Remove KAI name + surrounding punctuation
+  const escapedFound = found.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  cleaned = cleaned.replace(new RegExp(`${escapedFound}[,!.\\s]*`, 'i'), '');
+  cleaned = cleaned.replace(/^[,!.\s¿¡]+/, '').replace(/[,!.\s]+$/, '').trim();
+
+  return { addressed: true, cleaned };
 }
 
 function getIntent(text: string): Intent {

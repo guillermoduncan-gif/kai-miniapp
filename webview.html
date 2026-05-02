@@ -324,10 +324,12 @@ setInterval(() => {
 }, 1000);
 
 function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['chat','contacts','vision'][i] === tab));
+  const tabs = ['chat','contacts','vision','memory'];
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', tabs[i] === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + tab).classList.add('active');
   if (tab === 'contacts') loadContacts();
+  if (tab === 'memory') loadMemory();
 }
 
 // Chat
