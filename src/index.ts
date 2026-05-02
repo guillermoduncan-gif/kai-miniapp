@@ -261,6 +261,10 @@ function getIntent(text: string): Intent {
     tRaw.match(/^(?:can you |please )?call\s+(.+?)$/);
   if (phoneMatch) return { type: 'call', name: phoneMatch[1].trim(), app: 'phone' };
 
+  // Location learning — "I'm in Madrid", "estoy en París", "je suis à Tokyo"
+  const locationLearnMatch = tRaw.match(/^(?:i(?:'m| am) (?:in|at)|estoy en|je suis (?:à|a)|ich bin in|sto a|estou em)\s+([a-zA-ZÀ-ÿ\s,]+)$/i);
+  if (locationLearnMatch) return { type: 'weather', location: locationLearnMatch[1].trim(), time_ref: 'today' };
+
   if (tRaw.includes('remind me') || tRaw.includes('recuérdame') || tRaw.includes('recordarme') ||
       tRaw.startsWith('set a reminder') || tRaw.startsWith('set reminder'))
     return { type: 'reminder', text: userOriginal };
