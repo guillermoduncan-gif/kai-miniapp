@@ -156,6 +156,7 @@
   <div class="tab active" onclick="switchTab('chat')">CHAT</div>
   <div class="tab" onclick="switchTab('contacts')">CONTACTS</div>
   <div class="tab" onclick="switchTab('vision')">VISION</div>
+  <div class="tab" onclick="switchTab('reminders')">REMINDERS</div>
   <div class="tab" onclick="switchTab('memory')">MEMORY</div>
 </div>
 
@@ -238,6 +239,38 @@
   </div>
 </div>
 
+<!-- Reminders Panel -->
+<div class="panel" id="panel-reminders">
+  <div style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px">
+
+    <!-- Add reminder -->
+    <div style="background:rgba(240,192,64,0.05);border:1px solid var(--border-gold);border-radius:8px;padding:14px">
+      <div style="font-family:'Share Tech Mono',monospace;font-size:0.7em;letter-spacing:2px;color:var(--gold);margin-bottom:10px">⏰ ADD REMINDER</div>
+      <input id="reminderText" type="text" placeholder="What to remind you about..."
+        style="width:100%;padding:8px 12px;background:rgba(240,192,64,0.05);border:1px solid var(--border-gold);border-radius:6px;color:#f0e8d0;font-family:'Share Tech Mono',monospace;font-size:0.7em;margin-bottom:8px;box-sizing:border-box">
+      <input id="reminderTime" type="datetime-local"
+        style="width:100%;padding:8px 12px;background:rgba(240,192,64,0.05);border:1px solid var(--border-gold);border-radius:6px;color:#f0e8d0;font-family:'Share Tech Mono',monospace;font-size:0.7em;margin-bottom:10px;box-sizing:border-box">
+      <button onclick="addReminderManual()"
+        style="width:100%;padding:10px;background:rgba(240,192,64,0.1);border:1px solid var(--border-gold);border-radius:6px;color:var(--gold);font-family:'Share Tech Mono',monospace;font-size:0.7em;letter-spacing:1px;cursor:pointer">
+        + ADD REMINDER
+      </button>
+      <div id="reminderAddStatus" style="margin-top:8px;font-family:'Share Tech Mono',monospace;font-size:0.65em;color:rgba(240,224,208,0.5)"></div>
+    </div>
+
+    <!-- Reminders list -->
+    <div style="background:rgba(240,192,64,0.05);border:1px solid var(--border-gold);border-radius:8px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-family:'Share Tech Mono',monospace;font-size:0.7em;letter-spacing:2px;color:var(--gold)">⏰ UPCOMING</div>
+        <button onclick="loadReminders()" style="padding:4px 10px;background:rgba(240,192,64,0.1);border:1px solid var(--border-gold);border-radius:4px;color:var(--gold);font-family:'Share Tech Mono',monospace;font-size:0.6em;cursor:pointer">↻ REFRESH</button>
+      </div>
+      <div id="remindersList" style="display:flex;flex-direction:column;gap:8px">
+        <div style="color:rgba(240,224,208,0.4);font-family:'Share Tech Mono',monospace;font-size:0.7em">Tap REFRESH to load</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <!-- Memory Panel -->
 <div class="panel" id="panel-memory">
   <div style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px">
@@ -289,6 +322,8 @@
 <div class="bottom-bar">
   <div class="mode-pill" id="translationPill">TRANSLATION OFF</div>
   <div class="mode-pill" id="listeningPill" style="opacity:0.4">👂 LISTEN OFF</div>
+  <div class="mode-pill" id="drivingPill" style="opacity:0.4;cursor:pointer" onclick="toggleDrivingMode()">🚗 DRIVE OFF</div>
+  <div class="mode-pill" id="proactivePill" style="opacity:0.4;cursor:pointer" onclick="toggleProactiveMode()">👁️ MONITOR OFF</div>
   <div class="timestamp" id="clock"></div>
 </div>
 
@@ -324,12 +359,13 @@ setInterval(() => {
 }, 1000);
 
 function switchTab(tab) {
-  const tabs = ['chat','contacts','vision','memory'];
+  const tabs = ['chat','contacts','vision','reminders','memory'];
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', tabs[i] === tab));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + tab).classList.add('active');
   if (tab === 'contacts') loadContacts();
   if (tab === 'memory') loadMemory();
+  if (tab === 'reminders') loadReminders();
 }
 
 // Chat
@@ -909,6 +945,7 @@ function connectSSE() {
     setTimeout(() => { window.location.href = urls[app] || urls.phone; }, 300);
   });
 
+  // Driving mode status
   es.addEventListener('status', e => {
     const d = JSON.parse(e.data);
     setStatus(d.state);
@@ -924,6 +961,27 @@ function connectSSE() {
         lp.style.opacity = d.listening_mode ? '1' : '0.4';
         lp.style.borderColor = d.listening_mode ? 'rgba(255,200,100,0.8)' : 'rgba(255,255,255,0.2)';
         lp.style.color = d.listening_mode ? '#ffc864' : '';
+      }
+    }
+    if (d.driving_mode !== undefined) {
+      const dp = document.getElementById('drivingPill');
+      if (dp) {
+        drivingMode = d.driving_mode;
+        dp.textContent = drivingMode ? '🚗 DRIVING' : '🚗 DRIVE OFF';
+        dp.style.opacity = drivingMode ? '1' : '0.4';
+        dp.style.borderColor = drivingMode ? 'rgba(255,200,0,0.8)' : '';
+        dp.style.color = drivingMode ? '#ffc800' : '';
+      }
+    }
+    if (d.proactive_mode !== undefined) {
+      const pp = document.getElementById('proactivePill');
+      if (pp) {
+        proactiveMode = d.proactive_mode;
+        pp.textContent = proactiveMode ? '👁️ MONITORING' : '👁️ MONITOR OFF';
+        pp.style.opacity = proactiveMode ? '1' : '0.4';
+        pp.style.borderColor = proactiveMode ? 'rgba(0,255,180,0.8)' : '';
+        pp.style.color = proactiveMode ? '#00ffb4' : '';
+        if (proactiveMode) startProactiveMonitor(); else stopProactiveMonitor();
       }
     }
   });
@@ -1151,13 +1209,183 @@ function connectSSE() {
     hideEmpty(); removeThinking();
     const msg = document.createElement('div');
     msg.className = 'message kai';
-    msg.innerHTML = '<div class="message-label" style="color:rgba(255,200,100,0.8)">⚠️ VISION ALERT</div>' +
-      '<div class="bubble" style="border-color:rgba(255,200,100,0.3);color:#ffd080">' + esc(d.result) + '</div>';
+    msg.innerHTML = '<div class="message-label" style="color:rgba(255,80,80,0.9)">⚠️ VISION ALERT</div>' +
+      '<div class="bubble" style="border-color:rgba(255,80,80,0.4);background:rgba(255,80,80,0.05);color:#ffd0d0">' + esc(d.result) + '</div>';
     conv.appendChild(msg); scrollBottom();
   });
 }
 connectSSE();
-// ── Memory Panel ───────────────────────────────────────────────────────────
+// ── Reminders UI ───────────────────────────────────────────────────────────
+async function loadReminders() {
+  const list = document.getElementById('remindersList');
+  list.innerHTML = '<div style="color:rgba(240,224,208,0.4);font-family:\'Share Tech Mono\',monospace;font-size:0.7em">Loading...</div>';
+  try {
+    const res = await fetch(`${KAI_CLOUD}/reminders/guille`, {
+      headers: { 'x-api-key': KAI_KEY }
+    });
+    const data = await res.json();
+    const reminders = data.reminders || [];
+    if (!reminders.length) {
+      list.innerHTML = '<div style="color:rgba(240,224,208,0.4);font-family:\'Share Tech Mono\',monospace;font-size:0.7em">No upcoming reminders</div>';
+      return;
+    }
+    list.innerHTML = '';
+    reminders.forEach(function(r) {
+      const div = document.createElement('div');
+      div.style.cssText = 'padding:10px 12px;background:rgba(240,192,64,0.05);border:1px solid var(--border-gold);border-radius:6px;display:flex;justify-content:space-between;align-items:center;gap:8px';
+      const time = r.remind_at ? new Date(r.remind_at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : 'No time set';
+      div.innerHTML = '<div style="flex:1"><div style="font-size:0.85em;color:#f0e8d0">' + esc(r.message) + '</div>' +
+        '<div style="font-family:\'Share Tech Mono\',monospace;font-size:0.6em;color:var(--gold);margin-top:3px">⏰ ' + esc(time) + '</div></div>' +
+        '<button onclick="deleteReminder(\'' + esc(r.id) + '\')" style="background:rgba(255,80,80,0.1);border:1px solid rgba(255,80,80,0.4);border-radius:4px;color:#ff5050;padding:4px 8px;font-family:\'Share Tech Mono\',monospace;font-size:0.6em;cursor:pointer">✕ DELETE</button>';
+      list.appendChild(div);
+    });
+  } catch(e) {
+    list.innerHTML = '<div style="color:#ff5050">Failed to load reminders</div>';
+  }
+}
+
+async function addReminderManual() {
+  const text = document.getElementById('reminderText').value.trim();
+  const timeVal = document.getElementById('reminderTime').value;
+  const status = document.getElementById('reminderAddStatus');
+  if (!text) { status.textContent = '❌ Please enter a reminder'; status.style.color = '#ff5050'; return; }
+  status.textContent = '⏳ Adding...'; status.style.color = 'rgba(240,224,208,0.5)';
+  try {
+    // Use AI time parsing if time provided, otherwise save without time
+    const body = {
+      speaker_key: SPEAKER_KEY,
+      message: text,
+      remind_at: timeVal ? new Date(timeVal).toISOString() : null,
+      timezone: 'America/Costa_Rica'
+    };
+    const res = await fetch(`${KAI_CLOUD}/reminders/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': KAI_KEY },
+      body: JSON.stringify(body)
+    });
+    if (res.ok) {
+      status.textContent = '✅ Reminder added!'; status.style.color = '#00ff64';
+      document.getElementById('reminderText').value = '';
+      document.getElementById('reminderTime').value = '';
+      setTimeout(() => { status.textContent = ''; loadReminders(); }, 1500);
+    } else {
+      status.textContent = '❌ Failed to add'; status.style.color = '#ff5050';
+    }
+  } catch(e) {
+    status.textContent = '❌ Error: ' + e.message; status.style.color = '#ff5050';
+  }
+}
+
+async function deleteReminder(id) {
+  try {
+    await fetch(`${KAI_CLOUD}/reminders/${id}`, {
+      method: 'DELETE',
+      headers: { 'x-api-key': KAI_KEY }
+    });
+    loadReminders();
+  } catch(e) {}
+}
+
+// ── Driving Mode ────────────────────────────────────────────────────────────
+let drivingMode = false;
+
+function toggleDrivingMode() {
+  drivingMode = !drivingMode;
+  const pill = document.getElementById('drivingPill');
+  pill.textContent = drivingMode ? '🚗 DRIVING' : '🚗 DRIVE OFF';
+  pill.style.opacity = drivingMode ? '1' : '0.4';
+  pill.style.borderColor = drivingMode ? 'rgba(255,200,0,0.8)' : '';
+  pill.style.color = drivingMode ? '#ffc800' : '';
+  // Notify server of driving mode change
+  fetch(`${KAI_CLOUD}/memory/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': KAI_KEY },
+    body: JSON.stringify({ speaker_key: SPEAKER_KEY, category: 'preference', key: 'driving_mode', value: drivingMode ? 'on' : 'off', source: 'explicit' })
+  }).catch(function() {});
+  // Show status in chat
+  const msg = document.createElement('div');
+  msg.className = 'message kai';
+  msg.innerHTML = '<div class="message-label" style="color:#ffc800">🚗 DRIVING MODE</div>' +
+    '<div class="bubble" style="border-color:rgba(255,200,0,0.3)">' +
+    (drivingMode ? 'Driving mode ON — responses simplified, minimal distractions' : 'Driving mode OFF') + '</div>';
+  const conv = document.getElementById('conversation');
+  const empty = document.getElementById('emptyState');
+  if (empty) empty.style.display = 'none';
+  conv.appendChild(msg);
+  conv.scrollTop = conv.scrollHeight;
+}
+
+// ── Proactive Monitor Mode ──────────────────────────────────────────────────
+let proactiveMode = false;
+let proactiveInterval = null;
+
+function toggleProactiveMode() {
+  proactiveMode = !proactiveMode;
+  const pill = document.getElementById('proactivePill');
+  if (proactiveMode) {
+    pill.textContent = '👁️ MONITORING';
+    pill.style.opacity = '1';
+    pill.style.borderColor = 'rgba(0,255,180,0.8)';
+    pill.style.color = '#00ffb4';
+    startProactiveMonitor();
+  } else {
+    pill.textContent = '👁️ MONITOR OFF';
+    pill.style.opacity = '0.4';
+    pill.style.borderColor = '';
+    pill.style.color = '';
+    stopProactiveMonitor();
+  }
+  const msg = document.createElement('div');
+  msg.className = 'message kai';
+  msg.innerHTML = '<div class="message-label" style="color:#00ffb4">👁️ PROACTIVE MONITOR</div>' +
+    '<div class="bubble" style="border-color:rgba(0,255,180,0.3)">' +
+    (proactiveMode ? 'Monitoring ON — I\'ll alert you to important things in view every 30 seconds' : 'Monitoring OFF') + '</div>';
+  const conv = document.getElementById('conversation');
+  const empty = document.getElementById('emptyState');
+  if (empty) empty.style.display = 'none';
+  conv.appendChild(msg);
+  conv.scrollTop = conv.scrollHeight;
+}
+
+function startProactiveMonitor() {
+  if (proactiveInterval) clearInterval(proactiveInterval);
+  proactiveInterval = setInterval(async function() {
+    if (!proactiveMode || !cameraStream) return;
+    try {
+      const video = document.getElementById('cameraVideo');
+      const canvas = document.getElementById('cameraCanvas');
+      if (!video || video.videoWidth === 0) return;
+      const scale = Math.min(1, 480 / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64 = canvas.toDataURL('image/jpeg', 0.4).split(',')[1];
+      const res = await fetch('/api/vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_base64: base64, mode: 'continuous', speaker_key: SPEAKER_KEY })
+      });
+      const data = await res.json();
+      if (data.is_notable && data.result && data.result !== 'NOTHING_NOTABLE') {
+        const conv = document.getElementById('conversation');
+        const msg = document.createElement('div');
+        msg.className = 'message kai';
+        msg.innerHTML = '<div class="message-label" style="color:rgba(255,80,80,0.9)">⚠️ ALERT</div>' +
+          '<div class="bubble" style="border-color:rgba(255,80,80,0.4);background:rgba(255,80,80,0.05)">' + esc(data.result) + '</div>';
+        conv.appendChild(msg);
+        conv.scrollTop = conv.scrollHeight;
+      }
+    } catch(e) {}
+  }, 30000);
+}
+
+function stopProactiveMonitor() {
+  if (proactiveInterval) { clearInterval(proactiveInterval); proactiveInterval = null; }
+}
+
+// Handle driving mode status from SSE
+es.addEventListener && typeof es.addEventListener === 'function' ? null : null; // safety check
+</script>
 const KAI_CLOUD = 'https://kai-cloud-production.up.railway.app';
 const KAI_KEY = 'kai-secret-guille-2026';
 const SPEAKER_KEY = 'guille';
