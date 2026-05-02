@@ -72,6 +72,10 @@ type Intent =
   | { type: 'listen_start' }
   | { type: 'listen_stop' }
   | { type: 'listen_summarize' }
+  | { type: 'sports'; query: string; league?: string }
+  | { type: 'song_identify' }
+  | { type: 'calendar'; query: string; query_type?: string }
+  | { type: 'calendar_create'; query: string }
   | { type: 'normal' };
 
 // ── KAI prefix detection ───────────────────────────────────────────────────
@@ -126,6 +130,36 @@ function getIntent(text: string): Intent {
       t.match(/(?:i\s+need|i\s+want|necesito|quiero\s+ir\s+a|busca(?:r)?(?:\s+un)?)\s+(?:a\s+|the\s+nearest\s+)?(.+?)(?:\s+near|\s+nearby)?$/) ||
       t.match(/(?:i'?m?\s+hungry|i\s+need\s+gas|i\s+need\s+a\s+bathroom)\s*[-,]?\s*(.+)/);
     if (navNatural) return { type: 'navigate', destination: navNatural[1].trim() };
+
+    // ── Sports ───────────────────────────────────────────────────────────
+    const sportsLeagues = ['nba', 'nfl', 'mlb', 'nhl', 'champions league', 'ucl', 'la liga',
+      'premier league', 'epl', 'serie a', 'bundesliga', 'mls', 'mma', 'ufc', 'ligue 1'];
+    const sportsKeywords = ['score', 'scores', 'game', 'match', 'standings', 'schedule',
+      'next game', 'result', 'who won', 'marcador', 'resultado', 'partido', 'clasificación'];
+    const hasSportsLeague = sportsLeagues.some(l => t.includes(l));
+    const hasSportsKeyword = sportsKeywords.some(k => t.includes(k));
+    if (hasSportsLeague || (hasSportsKeyword && (t.includes('today') || t.includes('tonight') ||
+        t.includes('yesterday') || t.includes('hoy') || hasSportsLeague))) {
+      const league = sportsLeagues.find(l => t.includes(l));
+      return { type: 'sports', query: t, league };
+    }
+
+    // ── Song recognition ─────────────────────────────────────────────────
+    if (t.includes('what song') || t.includes('what music') || t.includes('identify this song') ||
+        t.includes('shazam') || t.includes('what is this song') || t.includes("what's playing") ||
+        t.includes('what song is this') || t.includes('qué canción') || t.includes('que cancion') ||
+        t.includes('identify the song') || t.includes('recognize this song'))
+      return { type: 'song_identify' };
+
+    // ── Calendar ─────────────────────────────────────────────────────────
+    if (t.includes('add') && (t.includes('calendar') || t.includes('meeting') ||
+        t.includes('appointment') || t.includes('event') || t.includes('schedule')))
+      return { type: 'calendar_create', query: t };
+    if (t.includes('what do i have') || t.includes('my schedule') || t.includes('my calendar') ||
+        t.includes('any meetings') || t.includes('appointments') || t.includes('what\'s on') ||
+        t.includes('qué tengo') || t.includes('mi agenda') || t.includes('mis citas') ||
+        (t.includes('calendar') && !t.includes('add')))
+      return { type: 'calendar', query: t };
 
     // ── Listening mode ───────────────────────────────────────────────────
     if (t.includes('listen') || t.includes('start listening') || t.includes('escucha') ||
@@ -304,6 +338,23 @@ class KaiApp extends AppServer {
     listeningModeMap.set(sessionId, false);
     listeningBufferMap.set(sessionId, []);
     weatherContextMap.set(sessionId, {});
+
+    // ── Load memory context for this session ──────────────────────────────
+    let memoryContext = '';
+    try {
+      const memRes = await fetch(`${KAI_API_URL}/memory/context`, {
+        method: 'POST',
+        headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ speaker_key: speakerKey, query: 'general context', limit: 30 }),
+      });
+      const memData = await memRes.json() as any;
+      memoryContext = memData.context || '';
+      if (memoryContext) console.log(`🧠 Memory loaded: ${memData.memory_count} facts`);
+    } catch (e) { console.warn('Memory load failed:', e); }
+
+    // ── Session conversation buffer for learning ──────────────────────────
+    const sessionMessages: Array<{role: string; content: string}> = [];
+    let turnCount = 0;
     broadcast('session_start', { clear: true });
     broadcast('status', { state: 'ready', translation_mode: false, listening_mode: false });
 
@@ -511,6 +562,106 @@ class KaiApp extends AppServer {
         broadcast('reply', { text: msg });
         broadcast('status', { state: 'ready' });
         setTimeout(() => session.layouts.showTextWall(''), 5000);
+        return;
+      }
+
+      // ── Sports ────────────────────────────────────────────────────────
+      if (intent.type === 'sports') {
+        broadcast('user', { text: userText });
+        broadcast('status', { state: 'thinking' });
+        await session.layouts.showTextWall('⚽ Checking scores...');
+        try {
+          const res = await fetch(`${KAI_API_URL}/sports`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              speaker_key: speakerKey,
+              query: (intent as any).query,
+              league: (intent as any).league,
+            }),
+          });
+          const data = await res.json() as any;
+          const msg = data.summary || 'Could not get sports data.';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          setTimeout(() => session.layouts.showTextWall(''), 12000);
+        } catch {
+          await session.layouts.showTextWall('Sports data unavailable.');
+          broadcast('reply', { text: 'Sports data unavailable. Try again.' });
+          broadcast('status', { state: 'ready' });
+        }
+        return;
+      }
+
+      // ── Song recognition ──────────────────────────────────────────────
+      if (intent.type === 'song_identify') {
+        broadcast('user', { text: userText });
+        broadcast('status', { state: 'thinking' });
+        const msg = '🎵 Listening for song... hold me near the music for 5 seconds.';
+        await session.layouts.showTextWall(msg);
+        broadcast('reply', { text: msg });
+        // Trigger webview to record audio and send to backend
+        broadcast('song_identify', { action: 'start', duration: 5000 });
+        broadcast('status', { state: 'ready' });
+        return;
+      }
+
+      // ── Calendar — read ───────────────────────────────────────────────
+      if (intent.type === 'calendar') {
+        broadcast('user', { text: userText });
+        broadcast('status', { state: 'thinking' });
+        await session.layouts.showTextWall('📅 Checking calendar...');
+        try {
+          const res = await fetch(`${KAI_API_URL}/calendar/events`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ speaker_key: speakerKey, query: (intent as any).query }),
+          });
+          const data = await res.json() as any;
+          if (res.status === 401) {
+            const connectMsg = '📅 Calendar not connected. Visit kai-cloud.up.railway.app/calendar/connect to authorize.';
+            await session.layouts.showTextWall(connectMsg);
+            broadcast('reply', { text: connectMsg });
+            broadcast('status', { state: 'ready' });
+            return;
+          }
+          const msg = data.summary || 'Could not get calendar.';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('calendar_events', { events: data.events, label: data.label });
+          broadcast('status', { state: 'ready' });
+          setTimeout(() => session.layouts.showTextWall(''), 12000);
+        } catch {
+          await session.layouts.showTextWall('Calendar unavailable.');
+          broadcast('reply', { text: 'Calendar unavailable. Try again.' });
+          broadcast('status', { state: 'ready' });
+        }
+        return;
+      }
+
+      // ── Calendar — create ─────────────────────────────────────────────
+      if (intent.type === 'calendar_create') {
+        broadcast('user', { text: userText });
+        broadcast('status', { state: 'thinking' });
+        await session.layouts.showTextWall('📅 Creating event...');
+        try {
+          const res = await fetch(`${KAI_API_URL}/calendar/parse-and-create`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ speaker_key: speakerKey, query: (intent as any).query }),
+          });
+          const data = await res.json() as any;
+          const msg = data.summary || 'Could not create event.';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          setTimeout(() => session.layouts.showTextWall(''), 8000);
+        } catch {
+          await session.layouts.showTextWall('Could not create event.');
+          broadcast('reply', { text: 'Could not create calendar event.' });
+          broadcast('status', { state: 'ready' });
+        }
         return;
       }
 
@@ -820,12 +971,70 @@ class KaiApp extends AppServer {
       broadcast('status', { state: 'thinking' });
       await session.layouts.showTextWall('KAI is thinking...');
       try {
-        const response: KaiResponse = await callKaiAPI(userText, sessionId, userId);
+        // Save user message to conversation history
+        sessionMessages.push({ role: 'user', content: userText });
+        try {
+          await fetch(`${KAI_API_URL}/memory/conversation/save`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              speaker_key: speakerKey,
+              session_id: sessionId,
+              role: 'user',
+              content: userText,
+              intent_type: 'normal',
+            }),
+          });
+        } catch {}
+
+        const response: KaiResponse = await callKaiAPI(userText, sessionId, userId, memoryContext);
         const replyText = response.text || response.response || 'Sorry, I had trouble with that.';
         await session.layouts.showTextWall(replyText);
         broadcast('reply', { text: replyText });
         broadcast('status', { state: 'ready' });
         setTimeout(() => session.layouts.showTextWall(''), 8000);
+
+        // Save assistant response
+        sessionMessages.push({ role: 'assistant', content: replyText });
+        try {
+          await fetch(`${KAI_API_URL}/memory/conversation/save`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              speaker_key: speakerKey,
+              session_id: sessionId,
+              role: 'assistant',
+              content: replyText,
+            }),
+          });
+        } catch {}
+
+        // Trigger learning every 5 turns
+        turnCount++;
+        if (turnCount % 5 === 0 && sessionMessages.length >= 4) {
+          fetch(`${KAI_API_URL}/memory/learn`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              speaker_key: speakerKey,
+              session_id: sessionId,
+              recent_messages: sessionMessages.slice(-10),
+            }),
+          }).then(async (r) => {
+            const data = await r.json() as any;
+            if (data.count > 0) {
+              console.log(`🧠 Learned ${data.count} new facts:`, data.learned.map((f: any) => f.key));
+              // Refresh memory context
+              const memRes = await fetch(`${KAI_API_URL}/memory/context`, {
+                method: 'POST',
+                headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ speaker_key: speakerKey, query: 'general', limit: 30 }),
+              });
+              const memData = await memRes.json() as any;
+              memoryContext = memData.context || memoryContext;
+            }
+          }).catch(() => {});
+        }
       } catch {
         await session.layouts.showTextWall('Connection error.');
         broadcast('reply', { text: 'Connection error. Try again.' });

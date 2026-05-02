@@ -156,6 +156,7 @@
   <div class="tab active" onclick="switchTab('chat')">CHAT</div>
   <div class="tab" onclick="switchTab('contacts')">CONTACTS</div>
   <div class="tab" onclick="switchTab('vision')">VISION</div>
+  <div class="tab" onclick="switchTab('memory')">MEMORY</div>
 </div>
 
 <!-- Chat Panel -->
@@ -234,6 +235,54 @@
         <p style="font-size:0.85em;opacity:0.6">THEN TAP A BUTTON TO ANALYZE</p>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Memory Panel -->
+<div class="panel" id="panel-memory">
+  <div style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px">
+
+    <!-- Speaker Registration -->
+    <div style="background:rgba(240,192,64,0.05);border:1px solid var(--border-gold);border-radius:8px;padding:16px">
+      <div style="font-family:'Share Tech Mono',monospace;font-size:0.7em;letter-spacing:2px;color:var(--gold);margin-bottom:12px">🎤 SPEAKER PROFILE</div>
+      <div style="font-size:0.8em;color:rgba(240,224,208,0.6);margin-bottom:12px">Record your voice so KAI can identify you. Speak naturally for 15-20 seconds.</div>
+      <input id="speakerName" type="text" placeholder="Your name (e.g. Guille)"
+        style="width:100%;padding:8px 12px;background:rgba(240,192,64,0.05);border:1px solid var(--border-gold);border-radius:6px;color:#f0e8d0;font-family:'Share Tech Mono',monospace;font-size:0.7em;margin-bottom:10px">
+      <div style="display:flex;gap:8px">
+        <button id="recordVoiceBtn" onclick="toggleVoiceRecord()"
+          style="flex:1;padding:10px;background:rgba(79,195,247,0.1);border:1px solid rgba(79,195,247,0.4);border-radius:6px;color:#4fc3f7;font-family:'Share Tech Mono',monospace;font-size:0.65em;letter-spacing:1px;cursor:pointer">
+          🎤 RECORD VOICE
+        </button>
+        <button onclick="registerSpeaker()"
+          style="flex:1;padding:10px;background:rgba(240,192,64,0.1);border:1px solid var(--border-gold);border-radius:6px;color:var(--gold);font-family:'Share Tech Mono',monospace;font-size:0.65em;letter-spacing:1px;cursor:pointer">
+          💾 SAVE PROFILE
+        </button>
+      </div>
+      <div id="voiceRecordStatus" style="margin-top:8px;font-family:'Share Tech Mono',monospace;font-size:0.65em;color:rgba(240,224,208,0.5)"></div>
+    </div>
+
+    <!-- Memory Facts -->
+    <div style="background:rgba(240,192,64,0.05);border:1px solid var(--border-gold);border-radius:8px;padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-family:'Share Tech Mono',monospace;font-size:0.7em;letter-spacing:2px;color:var(--gold)">🧠 WHAT KAI KNOWS</div>
+        <button onclick="loadMemory()" style="padding:4px 10px;background:rgba(240,192,64,0.1);border:1px solid var(--border-gold);border-radius:4px;color:var(--gold);font-family:'Share Tech Mono',monospace;font-size:0.6em;cursor:pointer">↻ REFRESH</button>
+      </div>
+      <div id="memoryList" style="font-size:0.8em;color:rgba(240,224,208,0.7)">
+        <div style="color:rgba(240,224,208,0.4);font-family:'Share Tech Mono',monospace;font-size:0.7em">Tap REFRESH to load memories</div>
+      </div>
+    </div>
+
+    <!-- Conversation History -->
+    <div style="background:rgba(240,192,64,0.05);border:1px solid var(--border-gold);border-radius:8px;padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div style="font-family:'Share Tech Mono',monospace;font-size:0.7em;letter-spacing:2px;color:var(--gold)">💬 RECENT CONVERSATIONS</div>
+        <button onclick="loadHistory()" style="padding:4px 10px;background:rgba(240,192,64,0.1);border:1px solid var(--border-gold);border-radius:4px;color:var(--gold);font-family:'Share Tech Mono',monospace;font-size:0.6em;cursor:pointer">↻ LOAD</button>
+      </div>
+      <div id="historyList" style="font-size:0.8em;color:rgba(240,224,208,0.7)">
+        <div style="color:rgba(240,224,208,0.4);font-family:'Share Tech Mono',monospace;font-size:0.7em">Tap LOAD to see history</div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -972,6 +1021,82 @@ function connect() {
       '<div class="bubble" style="border-color:rgba(255,200,100,0.3);font-style:italic">' + esc(d.tip) + '</div>';
     conv.appendChild(msg); scrollBottom();
   });
+  // Song identification
+  es.addEventListener('song_identify', e => {
+    const d = JSON.parse(e.data);
+    if (d.action !== 'start') return;
+    hideEmpty(); removeThinking();
+    const recMsg = document.createElement('div');
+    recMsg.className = 'message kai';
+    recMsg.id = 'songRecording';
+    recMsg.innerHTML = '<div class="message-label" style="color:rgba(255,200,100,0.8)">🎵 LISTENING...</div>' +
+      '<div class="bubble" style="border-color:rgba(255,200,100,0.3)">Hold near the music for 5 seconds...</div>';
+    conv.appendChild(recMsg); scrollBottom();
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      const recorder = new MediaRecorder(stream);
+      const chunks = [];
+      recorder.ondataavailable = ev => chunks.push(ev.data);
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64 = reader.result.split(',')[1];
+          try {
+            const res = await fetch('https://kai-cloud-production.up.railway.app/song/identify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-api-key': 'kai-secret-guille-2026' },
+              body: JSON.stringify({ audio_base64: base64, audio_format: 'webm', speaker_key: 'guille' })
+            });
+            const data = await res.json();
+            const el = document.getElementById('songRecording');
+            if (el) {
+              let html = '<div class="message-label" style="color:rgba(255,200,100,0.8)">🎵 SONG</div>' +
+                '<div class="bubble" style="border-color:rgba(255,200,100,0.3);white-space:pre-wrap">' +
+                renderMd(data.summary || 'Could not identify.') + '</div>';
+              if (data.found && data.spotify_url) {
+                html += '<div style="display:flex;gap:8px;margin-top:8px">' +
+                  '<a href="' + esc(data.spotify_url) + '" target="_blank" style="padding:6px 10px;background:rgba(30,215,96,0.15);border:1px solid rgba(30,215,96,0.4);border-radius:6px;color:#1ed760;font-size:0.7em;text-decoration:none">▶ Spotify</a>' +
+                  '<a href="' + esc(data.apple_music_url) + '" target="_blank" style="padding:6px 10px;background:rgba(250,60,60,0.15);border:1px solid rgba(250,60,60,0.4);border-radius:6px;color:#fa3c3c;font-size:0.7em;text-decoration:none">🍎 Apple Music</a>' +
+                  '</div>';
+              }
+              el.innerHTML = html;
+            }
+          } catch(err) {
+            const el = document.getElementById('songRecording');
+            if (el) el.innerHTML = '<div class="message-label">🎵 SONG</div><div class="bubble">Could not identify song.</div>';
+          }
+        };
+        reader.readAsDataURL(blob);
+      };
+      recorder.start();
+      setTimeout(() => recorder.stop(), d.duration || 5000);
+    }).catch(() => {
+      const el = document.getElementById('songRecording');
+      if (el) el.innerHTML = '<div class="message-label">🎵 SONG</div><div class="bubble">Microphone access denied.</div>';
+    });
+  });
+
+  // Calendar events display
+  es.addEventListener('calendar_events', e => {
+    const d = JSON.parse(e.data);
+    if (!d.events?.length) return;
+    hideEmpty(); removeThinking();
+    const msg = document.createElement('div');
+    msg.className = 'message kai';
+    let html = '<div class="message-label" style="color:rgba(79,195,247,0.8)">📅 ' +
+      esc((d.label || 'CALENDAR').toUpperCase()) + '</div>' +
+      '<div class="bubble" style="border-color:rgba(79,195,247,0.3)">';
+    d.events.forEach(ev => {
+      html += '<div style="padding:4px 0;border-bottom:1px solid rgba(79,195,247,0.1)">' +
+        '<strong>' + esc(ev.time) + '</strong> — ' + esc(ev.title) +
+        (ev.location ? '<br><small style="color:#aaa">📍 ' + esc(ev.location) + '</small>' : '') + '</div>';
+    });
+    html += '</div>';
+    msg.innerHTML = html;
+    conv.appendChild(msg); scrollBottom();
+  });
+
   es.addEventListener('vision_record', e => {
     const d = JSON.parse(e.data);
     if (d.action === 'start') toggleRecording();
@@ -1020,6 +1145,162 @@ function connect() {
   es.onerror = () => { setStatus('ready'); setTimeout(connect, 3000); es.close(); };
 }
 connect();
+// ── Memory Panel ───────────────────────────────────────────────────────────
+const KAI_CLOUD = 'https://kai-cloud-production.up.railway.app';
+const KAI_KEY = 'kai-secret-guille-2026';
+const SPEAKER_KEY = 'guille';
+
+let voiceRecorder = null;
+let voiceChunks = [];
+let voiceRecording = false;
+let voiceBlob = null;
+
+function toggleVoiceRecord() {
+  if (voiceRecording) {
+    voiceRecorder.stop();
+  } else {
+    startVoiceRecord();
+  }
+}
+
+async function startVoiceRecord() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    voiceChunks = [];
+    voiceRecorder = new MediaRecorder(stream);
+    voiceRecorder.ondataavailable = e => voiceChunks.push(e.data);
+    voiceRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      voiceBlob = new Blob(voiceChunks, { type: 'audio/webm' });
+      voiceRecording = false;
+      const btn = document.getElementById('recordVoiceBtn');
+      btn.textContent = '✅ RECORDED';
+      btn.style.background = 'rgba(0,255,100,0.1)';
+      btn.style.borderColor = 'rgba(0,255,100,0.4)';
+      btn.style.color = '#00ff64';
+      document.getElementById('voiceRecordStatus').textContent =
+        `✅ ${Math.round(voiceBlob.size / 1024)}kb recorded. Tap SAVE PROFILE.`;
+    };
+    voiceRecorder.start();
+    voiceRecording = true;
+    const btn = document.getElementById('recordVoiceBtn');
+    btn.textContent = '⏹ STOP RECORDING';
+    btn.style.background = 'rgba(255,80,80,0.1)';
+    btn.style.borderColor = 'rgba(255,80,80,0.4)';
+    btn.style.color = '#ff5050';
+    document.getElementById('voiceRecordStatus').textContent = '🔴 Recording... speak naturally for 15-20 seconds';
+
+    // Auto-stop after 25 seconds
+    setTimeout(() => { if (voiceRecording && voiceRecorder) voiceRecorder.stop(); }, 25000);
+  } catch(e) {
+    document.getElementById('voiceRecordStatus').textContent = '❌ Microphone access denied';
+  }
+}
+
+async function registerSpeaker() {
+  const name = document.getElementById('speakerName').value.trim();
+  const status = document.getElementById('voiceRecordStatus');
+  if (!name) { status.textContent = '❌ Please enter your name'; return; }
+  if (!voiceBlob) { status.textContent = '❌ Please record your voice first'; return; }
+
+  status.textContent = '⏳ Registering...';
+  const reader = new FileReader();
+  reader.onloadend = async () => {
+    const base64 = reader.result.split(',')[1];
+    try {
+      const res = await fetch(`${KAI_CLOUD}/speaker/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': KAI_KEY },
+        body: JSON.stringify({ speaker_key: SPEAKER_KEY, display_name: name, audio_sample_base64: base64, language: 'en' })
+      });
+      const data = await res.json();
+      if (data.registered) {
+        status.textContent = `✅ ${name} registered successfully!`;
+        status.style.color = '#00ff64';
+      } else {
+        status.textContent = '❌ Registration failed';
+      }
+    } catch(e) {
+      status.textContent = '❌ Error: ' + e.message;
+    }
+  };
+  reader.readAsDataURL(voiceBlob);
+}
+
+async function loadMemory() {
+  const list = document.getElementById('memoryList');
+  list.innerHTML = '<div style="color:rgba(240,224,208,0.4);font-family:\'Share Tech Mono\',monospace;font-size:0.7em">Loading...</div>';
+  try {
+    const res = await fetch(`${KAI_CLOUD}/memory/get`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': KAI_KEY },
+      body: JSON.stringify({ speaker_key: SPEAKER_KEY, limit: 50 })
+    });
+    const data = await res.json();
+    if (!data.memories?.length) {
+      list.innerHTML = '<div style="color:rgba(240,224,208,0.4);font-family:\'Share Tech Mono\',monospace;font-size:0.7em">No memories yet. Chat with KAI to build memory.</div>';
+      return;
+    }
+    // Group by category
+    const grouped = {};
+    data.memories.forEach(m => {
+      if (!grouped[m.category]) grouped[m.category] = [];
+      grouped[m.category].push(m);
+    });
+    const catIcons = { preference:'⚙️', person:'👤', fact:'📋', habit:'🔄', sport:'⚽', topic:'💡', conversation:'💬' };
+    let html = '';
+    Object.entries(grouped).forEach(([cat, items]) => {
+      html += `<div style="margin-bottom:12px"><div style="font-family:'Share Tech Mono',monospace;font-size:0.65em;color:var(--gold);margin-bottom:6px">${catIcons[cat]||'•'} ${cat.toUpperCase()}</div>`;
+      items.forEach((m: any) => {
+        html += `<div style="padding:4px 8px;background:rgba(240,192,64,0.05);border-radius:4px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+          <span><strong>${esc(m.key)}</strong>: ${esc(m.value)}</span>
+          <button onclick="forgetMemory('${esc(m.key)}')" style="background:none;border:none;color:rgba(255,80,80,0.6);cursor:pointer;font-size:0.8em">✕</button>
+        </div>`;
+      });
+      html += '</div>';
+    });
+    list.innerHTML = html;
+  } catch(e) {
+    list.innerHTML = '<div style="color:#ff5050">Failed to load memories</div>';
+  }
+}
+
+async function forgetMemory(key) {
+  try {
+    await fetch(`${KAI_CLOUD}/memory/forget?speaker_key=${SPEAKER_KEY}&key=${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+      headers: { 'x-api-key': KAI_KEY }
+    });
+    loadMemory();
+  } catch(e) {}
+}
+
+async function loadHistory() {
+  const list = document.getElementById('historyList');
+  list.innerHTML = '<div style="color:rgba(240,224,208,0.4);font-family:\'Share Tech Mono\',monospace;font-size:0.7em">Loading...</div>';
+  try {
+    const res = await fetch(`${KAI_CLOUD}/memory/conversation/${SPEAKER_KEY}?limit=20`, {
+      headers: { 'x-api-key': KAI_KEY }
+    });
+    const data = await res.json();
+    if (!data.messages?.length) {
+      list.innerHTML = '<div style="color:rgba(240,224,208,0.4);font-family:\'Share Tech Mono\',monospace;font-size:0.7em">No conversation history yet.</div>';
+      return;
+    }
+    let html = '';
+    data.messages.forEach((m: any) => {
+      const isUser = m.role === 'user';
+      const time = new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      html += `<div style="padding:6px 8px;margin-bottom:6px;border-radius:6px;background:${isUser ? 'rgba(240,192,64,0.05)' : 'rgba(79,195,247,0.05)'};border-left:2px solid ${isUser ? 'var(--gold)' : 'var(--blue)'}">
+        <div style="font-family:'Share Tech Mono',monospace;font-size:0.6em;color:${isUser ? 'var(--gold)' : 'var(--blue)'};margin-bottom:2px">${isUser ? 'YOU' : 'KAI'} · ${time}</div>
+        <div style="font-size:0.8em">${esc(m.content.substring(0, 100))}${m.content.length > 100 ? '...' : ''}</div>
+      </div>`;
+    });
+    list.innerHTML = html;
+  } catch(e) {
+    list.innerHTML = '<div style="color:#ff5050">Failed to load history</div>';
+  }
+}
 </script>
 </body>
 </html>
