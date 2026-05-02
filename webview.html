@@ -971,6 +971,7 @@ function connectSSE() {
         dp.style.opacity = drivingMode ? '1' : '0.4';
         dp.style.borderColor = drivingMode ? 'rgba(255,200,0,0.8)' : '';
         dp.style.color = drivingMode ? '#ffc800' : '';
+        if (drivingMode) startDrivingVision(); else stopDrivingVision();
       }
     }
     if (d.proactive_mode !== undefined) {
@@ -1286,8 +1287,9 @@ async function deleteReminder(id) {
   } catch(e) {}
 }
 
-// ── Driving Mode ────────────────────────────────────────────────────────────
+// ── Driving Mode with Live Vision ──────────────────────────────────────────
 let drivingMode = false;
+let drivingVisionInterval = null;
 
 function toggleDrivingMode() {
   drivingMode = !drivingMode;
@@ -1296,23 +1298,106 @@ function toggleDrivingMode() {
   pill.style.opacity = drivingMode ? '1' : '0.4';
   pill.style.borderColor = drivingMode ? 'rgba(255,200,0,0.8)' : '';
   pill.style.color = drivingMode ? '#ffc800' : '';
-  // Notify server of driving mode change
-  fetch(`${KAI_CLOUD}/memory/save`, {
+
+  if (drivingMode) {
+    startDrivingVision();
+  } else {
+    stopDrivingVision();
+  }
+
+  // Save to server memory
+  fetch(KAI_CLOUD + '/memory/save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': KAI_KEY },
     body: JSON.stringify({ speaker_key: SPEAKER_KEY, category: 'preference', key: 'driving_mode', value: drivingMode ? 'on' : 'off', source: 'explicit' })
   }).catch(function() {});
-  // Show status in chat
+
+  // Show status message
   const msg = document.createElement('div');
   msg.className = 'message kai';
   msg.innerHTML = '<div class="message-label" style="color:#ffc800">🚗 DRIVING MODE</div>' +
     '<div class="bubble" style="border-color:rgba(255,200,0,0.3)">' +
-    (drivingMode ? 'Driving mode ON — responses simplified, minimal distractions' : 'Driving mode OFF') + '</div>';
+    (drivingMode
+      ? '🚗 Driving mode ON — Live vision active, analyzing every 5 seconds'
+      : '🚗 Driving mode OFF — Vision stopped') + '</div>';
   const conv = document.getElementById('conversation');
-  const empty = document.getElementById('emptyState');
-  if (empty) empty.style.display = 'none';
+  document.getElementById('emptyState') && (document.getElementById('emptyState').style.display = 'none');
   conv.appendChild(msg);
   conv.scrollTop = conv.scrollHeight;
+  switchTab('chat');
+}
+
+async function startDrivingVision() {
+  if (drivingVisionInterval) clearInterval(drivingVisionInterval);
+
+  // Auto-start camera if not already running
+  if (!cameraStream) {
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }, audio: false
+      });
+      const video = document.getElementById('cameraVideo');
+      video.srcObject = cameraStream;
+      video.style.display = 'block';
+      document.getElementById('cameraOff').style.display = 'none';
+      document.getElementById('camToggleBtn').textContent = '⏹ STOP';
+    } catch(e) {
+      console.warn('Camera auto-start failed:', e);
+    }
+  }
+
+  // Analyze every 5 seconds
+  drivingVisionInterval = setInterval(async function() {
+    if (!drivingMode || !cameraStream) return;
+    try {
+      const video = document.getElementById('cameraVideo');
+      const canvas = document.getElementById('cameraCanvas');
+      if (!video || video.videoWidth === 0) return;
+
+      // Use small image for speed
+      const MAX_W = 480;
+      const scale = Math.min(1, MAX_W / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64 = canvas.toDataURL('image/jpeg', 0.4).split(',')[1];
+
+      const res = await fetch('/api/vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_base64: base64, mode: 'driving', speaker_key: SPEAKER_KEY })
+      });
+      const data = await res.json();
+
+      // Only show if something notable detected
+      if (data.result && data.result !== 'CLEAR' && data.result.trim() !== '') {
+        const conv = document.getElementById('conversation');
+        const alert = document.createElement('div');
+        alert.className = 'message kai';
+
+        // Color based on alert type
+        const isCritical = data.result.includes('🚨') || data.result.includes('DANGER') || data.result.includes('STOP');
+        const bgColor = isCritical ? 'rgba(255,30,30,0.15)' : 'rgba(255,120,0,0.1)';
+        const borderColor = isCritical ? 'rgba(255,30,30,0.6)' : 'rgba(255,150,0,0.5)';
+        const labelColor = isCritical ? '#ff3030' : '#ff9000';
+
+        alert.innerHTML = '<div class="message-label" style="color:' + labelColor + '">🚗 DRIVING ALERT</div>' +
+          '<div class="bubble" style="border-color:' + borderColor + ';background:' + bgColor + ';font-size:1.1em;font-weight:bold">' +
+          esc(data.result) + '</div>';
+        conv.appendChild(alert);
+        conv.scrollTop = conv.scrollHeight;
+
+        // Auto-switch to chat tab so alert is visible
+        if (document.getElementById('panel-chat').classList.contains('active') === false) {
+          switchTab('chat');
+        }
+      }
+    } catch(e) { console.warn('Driving vision error:', e); }
+  }, 5000);
+}
+
+function stopDrivingVision() {
+  if (drivingVisionInterval) { clearInterval(drivingVisionInterval); drivingVisionInterval = null; }
 }
 
 // ── Proactive Monitor Mode ──────────────────────────────────────────────────

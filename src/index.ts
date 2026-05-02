@@ -25,6 +25,8 @@ const continuousModeMap = new Map<string, ReturnType<typeof setInterval>>();
 const listeningModeMap = new Map<string, boolean>();
 const listeningBufferMap = new Map<string, string[]>();
 const coachIntervalMap = new Map<string, ReturnType<typeof setInterval>>();
+const drivingModeMap = new Map<string, boolean>();
+const proactiveModeMap = new Map<string, boolean>();
 
 // ── Weather conversation context ──────────────────────────────────────────
 // Remembers last weather query so follow-ups like "what about next week"
@@ -72,6 +74,9 @@ type Intent =
   | { type: 'song_identify' }
   | { type: 'calendar'; query: string; query_type?: string }
   | { type: 'calendar_create'; query: string }
+  | { type: 'driving_mode'; on: boolean }
+  | { type: 'proactive_mode'; on: boolean }
+  | { type: 'timezone'; query: string }
   | { type: 'normal' };
 
 // ── KAI prefix detection ───────────────────────────────────────────────────
@@ -145,6 +150,34 @@ function getIntent(text: string): Intent {
       t.match(/(?:i\s+need|i\s+want|necesito|quiero\s+ir\s+a|busca(?:r)?(?:\s+un)?)\s+(?:a\s+|the\s+nearest\s+)?(.+?)(?:\s+near|\s+nearby)?$/) ||
       t.match(/(?:i'?m?\s+hungry|i\s+need\s+gas|i\s+need\s+a\s+bathroom)\s*[-,]?\s*(.+)/);
     if (navNatural) return { type: 'navigate', destination: navNatural[1].trim() };
+
+    // ── Timezone / world time ─────────────────────────────────────────────
+    if (t.includes('what time is it in') || t.includes('time in') ||
+        t.includes('qué hora es en') || t.includes('que hora es en') ||
+        t.includes('hora en') || t.includes('hora em') ||
+        t.includes('what time in') || t.includes('current time in') ||
+        t.includes('time difference') || t.includes('diferencia horaria') ||
+        t.includes('how many hours') || t.includes('cuántas horas de diferencia'))
+      return { type: 'timezone', query: t };
+
+    // ── Driving mode ─────────────────────────────────────────────────────
+    if (t.includes('driving mode on') || t.includes('start driving') ||
+        t.includes('modo conducción') || t.includes('modo manejo') ||
+        t.includes('estoy manejando') || t.includes('estoy conduciendo') ||
+        t.includes('i am driving') || t.includes("i'm driving"))
+      return { type: 'driving_mode', on: true };
+    if (t.includes('driving mode off') || t.includes('stop driving') ||
+        t.includes('ya no estoy manejando') || t.includes('salir de modo conducción'))
+      return { type: 'driving_mode', on: false };
+
+    // ── Proactive monitor ─────────────────────────────────────────────────
+    if (t.includes('monitor on') || t.includes('start monitoring') ||
+        t.includes('proactive on') || t.includes('activar monitor') ||
+        t.includes('modo monitor') || t.includes('watch mode'))
+      return { type: 'proactive_mode', on: true };
+    if (t.includes('monitor off') || t.includes('stop monitoring') ||
+        t.includes('proactive off') || t.includes('desactivar monitor'))
+      return { type: 'proactive_mode', on: false };
 
     // ── Sports ───────────────────────────────────────────────────────────
     const sportsLeagues = ['nba', 'nfl', 'mlb', 'nhl', 'champions league', 'ucl', 'la liga',
@@ -357,6 +390,8 @@ class KaiApp extends AppServer {
     listeningModeMap.set(sessionId, false);
     listeningBufferMap.set(sessionId, []);
     weatherContextMap.set(sessionId, {});
+    drivingModeMap.set(sessionId, false);
+    proactiveModeMap.set(sessionId, false);
 
     // ── Load memory context for this session ──────────────────────────────
     let memoryContext = '';
@@ -469,6 +504,8 @@ class KaiApp extends AppServer {
       listeningModeMap.delete(sessionId);
       listeningBufferMap.delete(sessionId);
       weatherContextMap.delete(sessionId);
+      drivingModeMap.delete(sessionId);
+      proactiveModeMap.delete(sessionId);
       console.log('🔴 Session ended, cleaned up');
     });
 
@@ -511,6 +548,59 @@ class KaiApp extends AppServer {
 
       const intent = getIntent(userText);
       console.log(`   → ${intent.type}${(intent as any).mode ? ':' + (intent as any).mode : ''}`);
+
+      // ── Timezone / world time ────────────────────────────────────────
+      if (intent.type === 'timezone') {
+        broadcast('user', { text: userText });
+        broadcast('status', { state: 'thinking' });
+        await session.layouts.showTextWall('🕐 Checking time...');
+        try {
+          const res = await fetch(`${KAI_API_URL}/timezone`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ speaker_key: speakerKey, query: (intent as any).query, original_text: userText }),
+          });
+          const data = await res.json() as any;
+          const msg = data.summary || 'Could not get time.';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+          setTimeout(() => session.layouts.showTextWall(''), 10000);
+        } catch {
+          const msg = 'Time lookup failed. Try again.';
+          await session.layouts.showTextWall(msg);
+          broadcast('reply', { text: msg });
+          broadcast('status', { state: 'ready' });
+        }
+        return;
+      }
+
+      // ── Driving mode ──────────────────────────────────────────────────
+      if (intent.type === 'driving_mode') {
+        drivingModeMap.set(sessionId, intent.on);
+        const msg = intent.on
+          ? '🚗 Driving mode ON — responses simplified'
+          : '🚗 Driving mode OFF';
+        await session.layouts.showTextWall(msg);
+        broadcast('user', { text: userText });
+        broadcast('reply', { text: msg });
+        broadcast('status', { state: 'ready', driving_mode: intent.on });
+        return;
+      }
+
+      // ── Proactive monitor ─────────────────────────────────────────────
+      if (intent.type === 'proactive_mode') {
+        proactiveModeMap.set(sessionId, intent.on);
+        const msg = intent.on
+          ? "👁️ Proactive monitor ON — I'll alert you to important things"
+          : '👁️ Proactive monitor OFF';
+        await session.layouts.showTextWall(msg);
+        broadcast('user', { text: userText });
+        broadcast('reply', { text: msg });
+        broadcast('status', { state: 'ready', proactive_mode: intent.on });
+        broadcast('proactive_mode', { on: intent.on });
+        return;
+      }
 
       // ── Test call ────────────────────────────────────────────────────
       if (intent.type === 'test_call') {
@@ -1025,6 +1115,15 @@ class KaiApp extends AppServer {
             }),
           });
         } catch {}
+
+        // Inject driving mode instruction if active
+        const isDriving = drivingModeMap.get(sessionId);
+        const drivingContext = isDriving
+          ? '[DRIVING MODE: Keep response under 15 words. No lists. Safety first. Simple and direct.]'
+          : '';
+        const fullMemoryContext = drivingContext
+          ? `${drivingContext}\n${memoryContext}`
+          : memoryContext;
 
         const response: KaiResponse = await callKaiAPI(userText, sessionId, userId);
         const replyText = response.text || response.response || 'Sorry, I had trouble with that.';
