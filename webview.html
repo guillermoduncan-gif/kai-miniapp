@@ -1383,9 +1383,9 @@ function stopProactiveMonitor() {
   if (proactiveInterval) { clearInterval(proactiveInterval); proactiveInterval = null; }
 }
 
-// Handle driving mode status from SSE
-es.addEventListener && typeof es.addEventListener === 'function' ? null : null; // safety check
-</script>
+// Handle driving mode status from SSE — safety check
+if (typeof es !== 'undefined' && es.addEventListener) { /* SSE ready */ }
+
 const KAI_CLOUD = 'https://kai-cloud-production.up.railway.app';
 const KAI_KEY = 'kai-secret-guille-2026';
 const SPEAKER_KEY = 'guille';
