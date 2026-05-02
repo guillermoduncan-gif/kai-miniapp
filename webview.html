@@ -1261,14 +1261,15 @@ async function loadMemory() {
     });
     const catIcons = { preference:'⚙️', person:'👤', fact:'📋', habit:'🔄', sport:'⚽', topic:'💡', conversation:'💬' };
     let html = '';
-    Object.entries(grouped).forEach(([cat, items]) => {
+    Object.entries(grouped).forEach(function(entry) {
+      var cat = entry[0];
+      var items = entry[1];
       html += '<div style="margin-bottom:12px"><div style="font-family:\'Share Tech Mono\',monospace;font-size:0.65em;color:var(--gold);margin-bottom:6px">' + (catIcons[cat]||'•') + ' ' + cat.toUpperCase() + '</div>';
       items.forEach(function(m) {
         html += '<div style="padding:4px 8px;background:rgba(240,192,64,0.05);border-radius:4px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">' +
           '<span><strong>' + esc(m.key) + '</strong>: ' + esc(m.value) + '</span>' +
           '<button onclick="forgetMemory(\'' + esc(m.key) + '\')" style="background:none;border:none;color:rgba(255,80,80,0.6);cursor:pointer;font-size:0.8em">✕</button>' +
           '</div>';
-      });
       });
       html += '</div>';
     });
