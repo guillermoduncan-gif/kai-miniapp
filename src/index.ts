@@ -566,7 +566,7 @@ class KaiApp extends AppServer {
           const res = await fetch(`${KAI_API_URL}/weather`, {
             method: 'POST',
             headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ speaker_key: speakerKey, location, time_ref: timeRef }),
+            body: JSON.stringify({ speaker_key: speakerKey, location, time_ref: timeRef, query: userText }),
           });
           const weatherData = await res.json() as any;
           console.log(`🌤️ Weather response (${res.status}):`, JSON.stringify(weatherData).substring(0, 200));
@@ -612,6 +612,7 @@ class KaiApp extends AppServer {
               speaker_key: speakerKey,
               query: (intent as any).query,
               league: (intent as any).league,
+              original_text: userText,
             }),
           });
           const data = await res.json() as any;
