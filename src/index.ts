@@ -405,12 +405,20 @@ class KaiApp extends AppServer {
       memoryContext = memData.context || '';
       if (memoryContext) {
         console.log(`🧠 Memory loaded: ${memData.memory_count} facts`);
-        // Push context to session cache so turn.py can use it
+        // Push context to session cache — turn.py reads this for AI responses
         await fetch(`${KAI_API_URL}/memory/session/set`, {
           method: 'POST',
           headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: sessionId, speaker_key: speakerKey, context: memoryContext }),
         });
+        // Also store directly in Redis under the key turn.py reads
+        try {
+          await fetch(`${KAI_API_URL}/session/context`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, context: memoryContext }),
+          });
+        } catch {}
       }
     } catch (e) { console.warn('Memory load failed:', e); }
 
@@ -578,6 +586,14 @@ class KaiApp extends AppServer {
       // ── Driving mode ──────────────────────────────────────────────────
       if (intent.type === 'driving_mode') {
         drivingModeMap.set(sessionId, intent.on);
+        // Store in Redis so turn.py can read it
+        try {
+          await fetch(`${KAI_API_URL}/session/driving`, {
+            method: 'POST',
+            headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, driving_mode: intent.on }),
+          });
+        } catch {}
         const msg = intent.on
           ? '🚗 Driving mode ON — responses simplified'
           : '🚗 Driving mode OFF';
@@ -669,6 +685,18 @@ class KaiApp extends AppServer {
           broadcast('reply', { text: msg });
           broadcast('status', { state: 'ready' });
           weatherContextMap.set(sessionId, { location, time_ref: timeRef });
+
+          // Save timezone to memory when location is explicitly given
+          if ((intent as any).location && weatherData.city) {
+            try {
+              await fetch(`${KAI_API_URL}/timezone/save`, {
+                method: 'POST',
+                headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ speaker_key: speakerKey, location: weatherData.city, country: weatherData.country }),
+              });
+            } catch {}
+          }
+
           setTimeout(() => session.layouts.showTextWall(''), 12000);
         } catch (e: any) {
           console.error('❌ Weather error:', e?.message || e);
@@ -1125,7 +1153,9 @@ class KaiApp extends AppServer {
           ? `${drivingContext}\n${memoryContext}`
           : memoryContext;
 
-        const response: KaiResponse = await callKaiAPI(userText, sessionId, userId);
+        const response: KaiResponse = await callKaiAPI(
+          userText, sessionId, userId
+        );
         const replyText = response.text || response.response || 'Sorry, I had trouble with that.';
         await session.layouts.showTextWall(replyText);
         broadcast('reply', { text: replyText });
