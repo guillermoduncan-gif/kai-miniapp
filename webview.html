@@ -1147,8 +1147,6 @@ function connectSSE() {
       '<div class="bubble" style="border-color:rgba(255,200,100,0.3);color:#ffd080">' + esc(d.result) + '</div>';
     conv.appendChild(msg); scrollBottom();
   });
-
-  es.onerror = () => { setStatus('ready'); setTimeout(connectSSE, 3000); };
 }
 connectSSE();
 // ── Memory Panel ───────────────────────────────────────────────────────────
