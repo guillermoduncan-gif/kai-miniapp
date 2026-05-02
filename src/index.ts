@@ -349,7 +349,15 @@ class KaiApp extends AppServer {
       });
       const memData = await memRes.json() as any;
       memoryContext = memData.context || '';
-      if (memoryContext) console.log(`🧠 Memory loaded: ${memData.memory_count} facts`);
+      if (memoryContext) {
+        console.log(`🧠 Memory loaded: ${memData.memory_count} facts`);
+        // Push context to session cache so turn.py can use it
+        await fetch(`${KAI_API_URL}/memory/session/set`, {
+          method: 'POST',
+          headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, speaker_key: speakerKey, context: memoryContext }),
+        });
+      }
     } catch (e) { console.warn('Memory load failed:', e); }
 
     // ── Session conversation buffer for learning ──────────────────────────
@@ -987,7 +995,7 @@ class KaiApp extends AppServer {
           });
         } catch {}
 
-        const response: KaiResponse = await callKaiAPI(userText, sessionId, userId, memoryContext);
+        const response: KaiResponse = await callKaiAPI(userText, sessionId, userId);
         const replyText = response.text || response.response || 'Sorry, I had trouble with that.';
         await session.layouts.showTextWall(replyText);
         broadcast('reply', { text: replyText });
@@ -1032,6 +1040,12 @@ class KaiApp extends AppServer {
               });
               const memData = await memRes.json() as any;
               memoryContext = memData.context || memoryContext;
+              // Push updated context to session cache
+              fetch(`${KAI_API_URL}/memory/session/set`, {
+                method: 'POST',
+                headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, speaker_key: speakerKey, context: memoryContext }),
+              }).catch(() => {});
             }
           }).catch(() => {});
         }
