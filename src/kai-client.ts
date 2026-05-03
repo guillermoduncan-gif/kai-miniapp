@@ -1,6 +1,6 @@
 /**
- * kai-client.ts — KAI Cloud API client
- * Phase 4: translation + contacts/calling
+ * kai-client.ts — KAI Cloud API client v2.0
+ * Multi-user: speaker key derived from userId
  */
 
 const KAI_API_URL = process.env.KAI_API_URL || 'https://kai-cloud-production.up.railway.app';
@@ -42,9 +42,15 @@ const headers = {
 };
 
 export async function callKaiAPI(userText: string, sessionId: string, userId: string): Promise<KaiResponse> {
+  const speakerKey = userIdToSpeakerKey(userId);
   const res = await fetch(`${KAI_API_URL}/process`, {
     method: 'POST', headers,
-    body: JSON.stringify({ text: userText, session_id: sessionId, speaker_key: userIdToSpeakerKey(userId) }),
+    body: JSON.stringify({
+      text: userText,
+      session_id: sessionId,
+      speaker_key: speakerKey,
+      speaker_display_name: speakerKey,
+    }),
   });
   if (!res.ok) throw new Error(`KAI API error ${res.status}: ${await res.text()}`);
   return res.json() as Promise<KaiResponse>;
@@ -110,6 +116,38 @@ export async function saveMemory(speakerKey: string, content: string, category =
   });
 }
 
+/**
+ * userIdToSpeakerKey — converts Mentra userId to a KAI speaker key.
+ *
+ * Multi-user strategy:
+ * 1. Check hardcoded known users (fast path)
+ * 2. Derive from email prefix (e.g. "john@gmail.com" → "john")
+ * 3. Derive from userId hash prefix for anonymous users
+ *
+ * This means each Mentra account automatically gets their own
+ * isolated memory, contacts, reminders, and calendar.
+ */
 export function userIdToSpeakerKey(userId: string): string {
-  return ({ } as Record<string, string>)[userId] || 'guille';
+  if (!userId) return 'guest';
+
+  // Known user overrides — add yours here
+  const KNOWN_USERS: Record<string, string> = {
+    'guillermoduncan@gmail.com': 'guille',
+    // 'friend@gmail.com': 'friend',
+    // 'partner@gmail.com': 'partner',
+  };
+
+  if (KNOWN_USERS[userId]) return KNOWN_USERS[userId];
+
+  // Derive from email prefix
+  if (userId.includes('@')) {
+    const prefix = userId.split('@')[0]
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '_')
+      .substring(0, 20);
+    return prefix || 'guest';
+  }
+
+  // Fallback: use first 12 chars of userId
+  return userId.replace(/[^a-z0-9]/gi, '_').substring(0, 12).toLowerCase() || 'guest';
 }
