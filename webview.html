@@ -1012,7 +1012,6 @@ function connectSSE() {
       }
     }
   });
-  }); // end status listener
 
   es.addEventListener('incoming_call', e => {
     const d = JSON.parse(e.data);
