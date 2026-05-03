@@ -575,11 +575,23 @@ class KaiApp extends AppServer {
         /^(call|llama|llamar|whatsapp|facetime|remind me|recuérdame|set reminder|simulate|test call)/i.test(tLow) ||
         tLow.includes('remind me') || tLow.includes('my reminders');
 
-      // Bare greeting like "Hey KAI" with nothing after — respond with a hello
+      // Bare greeting — detect language and respond accordingly
       if (addressed && cleaned.length === 0) {
-        await session.layouts.showTextWall('👋 Hey! How can I help?');
+        const tLower = userText.toLowerCase();
+        let greetingReply = 'Hey! How can I help?';
+        if (/hola|buenos|buenas|oye|qu[eé] tal/.test(tLower))
+          greetingReply = 'Hola! En que te puedo ayudar?';
+        else if (/bonjour|salut|coucou/.test(tLower))
+          greetingReply = 'Bonjour! Comment puis-je vous aider?';
+        else if (/ciao|salve/.test(tLower))
+          greetingReply = 'Ciao! Come posso aiutarti?';
+        else if (/oi |ol[aá]|bom dia|boa tarde/.test(tLower))
+          greetingReply = 'Oi! Como posso ajudar?';
+        else if (/hallo|guten/.test(tLower))
+          greetingReply = 'Hallo! Wie kann ich helfen?';
+        await session.layouts.showTextWall(greetingReply);
         broadcast('user', { text: userText });
-        broadcast('reply', { text: '👋 Hey! How can I help?' });
+        broadcast('reply', { text: greetingReply });
         broadcast('status', { state: 'ready' });
         setTimeout(() => session.layouts.showTextWall(''), 5000);
         return;

@@ -1279,10 +1279,20 @@ function speak(text, options) {
   if (voiceMode === 'silent' && !options.force) return;
   if (voiceMode === 'whisper' && !options.alert && !options.force) return;
 
-  // Cancel any current speech
+  // Strip emojis and special symbols before speaking
+  var cleanText = text
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')  // all emoji blocks
+    .replace(/[\u2600-\u27BF]/g, '')           // misc symbols
+    .replace(/[\u2B00-\u2BFF]/g, '')           // misc arrows
+    .replace(/[*_~`#]/g, '')                   // markdown symbols
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleanText) return;
+
   if (window.speechSynthesis) window.speechSynthesis.cancel();
 
-  const utter = new SpeechSynthesisUtterance(text);
+  var utter = new SpeechSynthesisUtterance(cleanText);
   utter.volume = voiceMode === 'whisper' ? 0.3 : 1.0;
   utter.rate = voiceMode === 'whisper' ? 0.9 : 1.0;
 
@@ -1296,7 +1306,7 @@ function speak(text, options) {
   var langKeys = Object.keys(langMap);
   for (var i = 0; i < langKeys.length; i++) {
     var langCode2 = langKeys[i];
-    if (langMap[langCode2].test(text)) { utter.lang = langCode2; break; }
+    if (langMap[langCode2].test(cleanText)) { utter.lang = langCode2; break; }
   }
 
   window.speechSynthesis.speak(utter);
