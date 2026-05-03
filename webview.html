@@ -934,8 +934,7 @@ function connectSSE() {
     const d = JSON.parse(e.data);
     addMessage('kai', d.text);
     setStatus('ready');
-    // Speak all replies in normal mode
-    speak(d.text);
+    // Note: SDK session.speak() handles TTS — browser speak() is fallback via 'speak' event
   });
   es.addEventListener('translation', e => { const d = JSON.parse(e.data); addMessage('translation', d.translation, d.detected_language); setStatus('ready'); });
   // Legacy overlay (kept for future use)
@@ -958,11 +957,14 @@ function connectSSE() {
     setTimeout(() => { window.location.href = urls[app] || urls.phone; }, 300);
   });
 
+  // SDK TTS fallback — when session.speak() fails, webview handles it
+  es.addEventListener('speak', e => {
+    const d = JSON.parse(e.data);
+    if (d.text) speak(d.text, { force: d.force, alert: d.alert });
+  });
+
   // Voice mode change from voice command
   es.addEventListener('voice_mode', e => {
-    const d = JSON.parse(e.data);
-    setVoiceMode(d.mode);
-  });
 
   // Driving mode and mode status updates
   es.addEventListener('status', e => {
@@ -1242,7 +1244,7 @@ connectSSE();
 let voiceMode = 'normal';
 
 const VOICE_MODES = ['normal', 'whisper', 'silent'];
-const VOICE_LABELS = { normal: '🔊 VOICE', whisper: '🤫 WHISPER', silent: '🔇 SILENT' };
+const VOICE_LABELS = { normal: 'VOICE ON', whisper: 'WHISPER', silent: 'SILENT' };
 const VOICE_COLORS = { normal: 'rgba(165,214,167,0.8)', whisper: 'rgba(255,200,100,0.8)', silent: 'rgba(255,80,80,0.8)' };
 
 function cycleVoiceMode() {

@@ -453,6 +453,32 @@ class KaiApp extends AppServer {
     // ── Session conversation buffer for learning ──────────────────────────
     const sessionMessages: Array<{role: string; content: string}> = [];
     let turnCount = 0;
+
+    // ── TTS helper — uses SDK speak() for native quality multilingual TTS ──
+    const speakViaSDK = async (text: string, options: { force?: boolean; alert?: boolean } = {}) => {
+      if (!text) return;
+      const cleanText = text
+        .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
+        .replace(/[\u2600-\u27BF]/g, '')
+        .replace(/[*_~`#]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!cleanText) return;
+      try {
+        await (session as any).speak(cleanText, { voice: 'marin' });
+      } catch (e) {
+        // Fallback to webview browser TTS
+        broadcast('speak', { text: cleanText, force: options.force, alert: options.alert });
+      }
+    };
+
+    // Convenience helper — broadcast reply AND speak it
+    const replyAndSpeak = async (text: string, options: { alert?: boolean; force?: boolean; silent?: boolean } = {}) => {
+      broadcast('reply', { text });
+      if (!options.silent) {
+        await speakViaSDK(text, options);
+      }
+    };
     broadcast('session_start', { clear: true });
     broadcast('status', { state: 'ready', translation_mode: false, listening_mode: false });
 
@@ -591,7 +617,7 @@ class KaiApp extends AppServer {
           greetingReply = 'Hallo! Wie kann ich helfen?';
         await session.layouts.showTextWall(greetingReply);
         broadcast('user', { text: userText });
-        broadcast('reply', { text: greetingReply });
+        await replyAndSpeak(greetingReply);
         broadcast('status', { state: 'ready' });
         setTimeout(() => session.layouts.showTextWall(''), 5000);
         return;
@@ -620,7 +646,7 @@ class KaiApp extends AppServer {
         const msg = modeLabels[intent.mode];
         await session.layouts.showTextWall(msg);
         broadcast('user', { text: userText });
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         broadcast('voice_mode', { mode: intent.mode });
         broadcast('status', { state: 'ready' });
         setTimeout(() => session.layouts.showTextWall(''), 4000);
@@ -641,13 +667,13 @@ class KaiApp extends AppServer {
           const data = await res.json() as any;
           const msg = data.summary || 'Could not get time.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
           setTimeout(() => session.layouts.showTextWall(''), 10000);
         } catch {
           const msg = 'Time lookup failed. Try again.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
         }
         return;
@@ -669,7 +695,7 @@ class KaiApp extends AppServer {
           : '🚗 Driving mode OFF';
         await session.layouts.showTextWall(msg);
         broadcast('user', { text: userText });
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         broadcast('status', { state: 'ready', driving_mode: intent.on });
         return;
       }
@@ -682,7 +708,7 @@ class KaiApp extends AppServer {
           : '👁️ Proactive monitor OFF';
         await session.layouts.showTextWall(msg);
         broadcast('user', { text: userText });
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         broadcast('status', { state: 'ready', proactive_mode: intent.on });
         broadcast('proactive_mode', { on: intent.on });
         return;
@@ -693,7 +719,7 @@ class KaiApp extends AppServer {
         const msg = `📞 Incoming: ${(intent as any).name}`;
         await session.layouts.showTextWall(msg);
         broadcast('incoming_call', { caller: (intent as any).name, title: (intent as any).name, body: '' });
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         setTimeout(() => session.layouts.showTextWall(''), 10000);
         return;
       }
@@ -704,7 +730,7 @@ class KaiApp extends AppServer {
         const msg = intent.on ? '🌍 Translation mode ON' : '🔇 Translation mode OFF';
         await session.layouts.showTextWall(msg);
         broadcast('user', { text: userText });
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         broadcast('status', { state: 'ready', translation_mode: intent.on });
         return;
       }
@@ -732,7 +758,7 @@ class KaiApp extends AppServer {
           const options = ambigOptions.map((o, i) => `${i + 1}. ${o}`).join(', ');
           const msg = `Which ${location} do you mean? ${options}`;
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
           // Save partial context so next reply completes it
           weatherContextMap.set(sessionId, { location, time_ref: timeRef });
@@ -752,7 +778,7 @@ class KaiApp extends AppServer {
           console.log(`🌤️ Weather response (${res.status}):`, JSON.stringify(weatherData).substring(0, 200));
           const msg = weatherData.summary || weatherData.detail || 'Could not get weather.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
           weatherContextMap.set(sessionId, { location, time_ref: timeRef });
 
@@ -772,7 +798,7 @@ class KaiApp extends AppServer {
           console.error('❌ Weather error:', e?.message || e);
           const msg = 'Weather unavailable. Try again.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
         }
         return;
@@ -785,7 +811,7 @@ class KaiApp extends AppServer {
         const msg = `🗺️ Opening Waze to ${destination}`;
         await session.layouts.showTextWall(msg);
         broadcast('navigate', { destination, waze_url: `waze://?q=${encodeURIComponent(destination)}&navigate=yes` });
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         broadcast('status', { state: 'ready' });
         setTimeout(() => session.layouts.showTextWall(''), 5000);
         return;
@@ -810,7 +836,7 @@ class KaiApp extends AppServer {
           const data = await res.json() as any;
           const msg = data.summary || 'Could not get sports data.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
           setTimeout(() => session.layouts.showTextWall(''), 12000);
         } catch {
@@ -827,7 +853,7 @@ class KaiApp extends AppServer {
         broadcast('status', { state: 'thinking' });
         const msg = '🎵 Listening for song... hold me near the music for 5 seconds.';
         await session.layouts.showTextWall(msg);
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         // Trigger webview to record audio and send to backend
         broadcast('song_identify', { action: 'start', duration: 5000 });
         broadcast('status', { state: 'ready' });
@@ -855,7 +881,7 @@ class KaiApp extends AppServer {
           }
           const msg = data.summary || 'Could not get calendar.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('calendar_events', { events: data.events, label: data.label });
           broadcast('status', { state: 'ready' });
           setTimeout(() => session.layouts.showTextWall(''), 12000);
@@ -881,7 +907,7 @@ class KaiApp extends AppServer {
           const data = await res.json() as any;
           const msg = data.summary || 'Could not create event.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
           setTimeout(() => session.layouts.showTextWall(''), 8000);
         } catch {
@@ -900,7 +926,7 @@ class KaiApp extends AppServer {
         const msg = '👂 Listening — capturing everything. Say "KAI summarize" when done.';
         await session.layouts.showTextWall(msg);
         broadcast('user', { text: userText });
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         broadcast('status', { state: 'ready', listening_mode: true });
         return;
       }
@@ -916,7 +942,7 @@ class KaiApp extends AppServer {
           : '👂 Listening stopped. Nothing captured.';
         await session.layouts.showTextWall(msg);
         broadcast('user', { text: userText });
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         broadcast('status', { state: 'ready', listening_mode: false });
         return;
       }
@@ -929,7 +955,7 @@ class KaiApp extends AppServer {
         if (buffer.length === 0) {
           const msg = 'Nothing captured yet. Say "KAI listen" first.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
           return;
         }
@@ -944,7 +970,7 @@ class KaiApp extends AppServer {
           const glassesText = sumData.glasses_text || sumData.summary || 'Could not summarize.';
 
           await session.layouts.showTextWall(glassesText);
-          broadcast('reply', { text: glassesText });
+          await replyAndSpeak(glassesText);
           broadcast('listen_summary', sumData);
           broadcast('status', { state: 'ready' });
 
@@ -975,7 +1001,7 @@ class KaiApp extends AppServer {
         } catch {
           const msg = 'Summary failed. Try again.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
         }
         return;
@@ -990,7 +1016,7 @@ class KaiApp extends AppServer {
         if (!contact) {
           const msg = `I don't have ${intent.name} in your contacts.`;
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
           return;
         }
@@ -998,7 +1024,7 @@ class KaiApp extends AppServer {
         const msg = `📞 Calling ${contact.name}...`;
         await session.layouts.showTextWall(msg);
         broadcast('direct_call', { contact, app: callApp });
-        broadcast('reply', { text: msg });
+        await replyAndSpeak(msg);
         broadcast('status', { state: 'ready' });
         return;
       }
@@ -1018,7 +1044,7 @@ class KaiApp extends AppServer {
           if (!parseRes.ok || !parsed.valid) {
             const msg = "I couldn't understand that reminder. Try: 'remind me to call mom at 3pm'";
             await session.layouts.showTextWall(msg);
-            broadcast('reply', { text: msg });
+            await replyAndSpeak(msg);
             broadcast('status', { state: 'ready' });
             return;
           }
@@ -1029,7 +1055,7 @@ class KaiApp extends AppServer {
           });
           const msg = `⏰ Got it! Reminding you to ${parsed.message} ${parsed.human_time}`;
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
           setTimeout(() => session.layouts.showTextWall(''), 8000);
         } catch {
@@ -1052,7 +1078,7 @@ class KaiApp extends AppServer {
             : `${reminders.length} reminder${reminders.length > 1 ? 's' : ''}:\n` +
               reminders.slice(0, 3).map((r: any) => `• ${r.message}`).join('\n');
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
           setTimeout(() => session.layouts.showTextWall(''), 10000);
         } catch {
@@ -1125,7 +1151,7 @@ class KaiApp extends AppServer {
           if (!photo || !photo.data) {
             const msg = 'Could not capture photo.';
             await session.layouts.showTextWall(msg);
-            broadcast('reply', { text: msg });
+            await replyAndSpeak(msg);
             broadcast('status', { state: 'ready' });
             return;
           }
@@ -1145,7 +1171,7 @@ class KaiApp extends AppServer {
         } catch (e: any) {
           const msg = e?.message?.includes('camera') ? 'Camera not available.' : 'Vision failed.';
           await session.layouts.showTextWall(msg);
-          broadcast('reply', { text: msg });
+          await replyAndSpeak(msg);
           broadcast('status', { state: 'ready' });
         }
         return;
@@ -1161,7 +1187,7 @@ class KaiApp extends AppServer {
           if (result.is_same_language) {
             const msg = `Already ${DEFAULT_TARGET_LANG}: "${result.translation}"`;
             await session.layouts.showTextWall(msg);
-            broadcast('reply', { text: msg });
+            await replyAndSpeak(msg);
           } else {
             await session.layouts.showTextWall(`[${result.detected_language}] ${result.translation}`);
             broadcast('translation', result);
@@ -1228,7 +1254,7 @@ class KaiApp extends AppServer {
         );
         const replyText = response.text || response.response || 'Sorry, I had trouble with that.';
         await session.layouts.showTextWall(replyText);
-        broadcast('reply', { text: replyText });
+        await replyAndSpeak(replyText);
         broadcast('status', { state: 'ready' });
         setTimeout(() => session.layouts.showTextWall(''), 8000);
 
