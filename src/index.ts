@@ -4,6 +4,22 @@ import * as path from 'path';
 import { AppServer, TpaSession } from '@mentra/sdk';
 import { callKaiAPI, translateText, detectLanguage, lookupContact, userIdToSpeakerKey, KaiResponse } from './kai-client';
 
+// ── Sentry (optional — only if DSN configured) ────────────────────────────
+const SENTRY_DSN = process.env.SENTRY_DSN || '';
+if (SENTRY_DSN) {
+  try {
+    const Sentry = require('@sentry/node');
+    Sentry.init({
+      dsn: SENTRY_DSN,
+      tracesSampleRate: 0.1,
+      environment: process.env.RAILWAY_ENVIRONMENT || 'production',
+    });
+    console.log('✅ Sentry initialized');
+  } catch (e) {
+    console.warn('⚠️ Sentry not available:', e);
+  }
+}
+
 const PACKAGE_NAME = process.env.PACKAGE_NAME || 'com.kai.glasses';
 const MENTRA_API_KEY = process.env.MENTRA_API_KEY || '';
 const PORT = parseInt(process.env.PORT || '3000');
@@ -76,6 +92,7 @@ type Intent =
   | { type: 'calendar_create'; query: string }
   | { type: 'driving_mode'; on: boolean }
   | { type: 'proactive_mode'; on: boolean }
+  | { type: 'voice_mode'; mode: 'normal' | 'whisper' | 'silent' }
   | { type: 'timezone'; query: string }
   | { type: 'normal' };
 
@@ -150,6 +167,17 @@ function getIntent(text: string): Intent {
       t.match(/(?:i\s+need|i\s+want|necesito|quiero\s+ir\s+a|busca(?:r)?(?:\s+un)?)\s+(?:a\s+|the\s+nearest\s+)?(.+?)(?:\s+near|\s+nearby)?$/) ||
       t.match(/(?:i'?m?\s+hungry|i\s+need\s+gas|i\s+need\s+a\s+bathroom)\s*[-,]?\s*(.+)/);
     if (navNatural) return { type: 'navigate', destination: navNatural[1].trim() };
+
+    // ── Voice mode ────────────────────────────────────────────────────────
+    if (t.includes('silent mode') || t.includes('modo silencio') || t.includes('silence') ||
+        t.includes('mute') || t.includes('silencio'))
+      return { type: 'voice_mode', mode: 'silent' };
+    if (t.includes('whisper mode') || t.includes('modo susurro') || t.includes('susurro') ||
+        t.includes('speak quietly') || t.includes('habla bajito'))
+      return { type: 'voice_mode', mode: 'whisper' };
+    if (t.includes('voice on') || t.includes('normal mode') || t.includes('speak normally') ||
+        t.includes('modo normal') || t.includes('voz normal') || t.includes('unmute'))
+      return { type: 'voice_mode', mode: 'normal' };
 
     // ── Timezone / world time ─────────────────────────────────────────────
     if (t.includes('what time is it in') || t.includes('time in') ||
@@ -436,6 +464,23 @@ class KaiApp extends AppServer {
       });
     } catch (e) { console.warn('Redis clear failed:', e); }
 
+    // ── Register/verify user on each session start ───────────────────────
+    try {
+      const onboardRes = await fetch(`${KAI_API_URL}/onboarding/register`, {
+        method: 'POST',
+        headers: { 'x-api-key': KAI_API_KEY_VAL, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          speaker_key: speakerKey,
+          display_name: speakerKey,
+          language: 'en',
+        }),
+      });
+      const onboardData = await onboardRes.json() as any;
+      if (onboardData.is_new) {
+        console.log(`👋 New user registered: ${speakerKey}`);
+      }
+    } catch (e) { console.warn('Onboarding failed:', e); }
+
     await session.layouts.showTextWall('KAI is ready 👋');
     setTimeout(() => session.layouts.showTextWall(''), 2000);
 
@@ -556,6 +601,19 @@ class KaiApp extends AppServer {
 
       const intent = getIntent(userText);
       console.log(`   → ${intent.type}${(intent as any).mode ? ':' + (intent as any).mode : ''}`);
+
+      // ── Voice mode ────────────────────────────────────────────────────
+      if (intent.type === 'voice_mode') {
+        const modeLabels = { normal: '🔊 Voice on — speaking normally', whisper: '🤫 Whisper mode — speaking quietly', silent: '🔇 Silent mode — text only' };
+        const msg = modeLabels[intent.mode];
+        await session.layouts.showTextWall(msg);
+        broadcast('user', { text: userText });
+        broadcast('reply', { text: msg });
+        broadcast('voice_mode', { mode: intent.mode });
+        broadcast('status', { state: 'ready' });
+        setTimeout(() => session.layouts.showTextWall(''), 4000);
+        return;
+      }
 
       // ── Timezone / world time ────────────────────────────────────────
       if (intent.type === 'timezone') {

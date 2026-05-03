@@ -228,6 +228,12 @@
       <button class="vision-btn" onclick="analyzeCamera('similarity')" style="border-color:rgba(180,100,255,0.4);color:#b464ff">👤 SIMILARITY</button>
       <button class="vision-btn" id="followBtn" onclick="promptFollowTarget()" style="border-color:rgba(0,255,180,0.4);color:#00ffb4">🎯 FOLLOW</button>
       <button class="vision-btn" id="recordBtn" onclick="toggleRecording()" style="grid-column: 1 / -1; background: rgba(255,80,80,0.1); border-color: rgba(255,80,80,0.4); color: #ff5050;">⏺ RECORD</button>
+      <!-- Zoom controls -->
+      <div style="grid-column: 1 / -1; display:flex; gap:8px; align-items:center; justify-content:center; padding:4px 0">
+        <button onclick="adjustZoom(-0.5)" style="flex:1;padding:8px;background:rgba(79,195,247,0.1);border:1px solid rgba(79,195,247,0.3);border-radius:6px;color:#4fc3f7;font-family:'Share Tech Mono',monospace;font-size:0.75em;cursor:pointer">🔍− ZOOM OUT</button>
+        <button onclick="resetZoom()" style="padding:8px 12px;background:rgba(79,195,247,0.05);border:1px solid rgba(79,195,247,0.2);border-radius:6px;color:#4fc3f7;font-family:'Share Tech Mono',monospace;font-size:0.7em;cursor:pointer" id="zoomLabel">1.0×</button>
+        <button onclick="adjustZoom(0.5)" style="flex:1;padding:8px;background:rgba(79,195,247,0.1);border:1px solid rgba(79,195,247,0.3);border-radius:6px;color:#4fc3f7;font-family:'Share Tech Mono',monospace;font-size:0.75em;cursor:pointer">🔍+ ZOOM IN</button>
+      </div>
     </div>
 
     <div class="vision-result" id="visionResults">
@@ -324,6 +330,7 @@
   <div class="mode-pill" id="listeningPill" style="opacity:0.4">👂 LISTEN OFF</div>
   <div class="mode-pill" id="drivingPill" style="opacity:0.4;cursor:pointer" onclick="toggleDrivingMode()">🚗 DRIVE OFF</div>
   <div class="mode-pill" id="proactivePill" style="opacity:0.4;cursor:pointer" onclick="toggleProactiveMode()">👁️ MONITOR OFF</div>
+  <div class="mode-pill" id="voicePill" style="cursor:pointer" onclick="cycleVoiceMode()">🔊 VOICE</div>
   <div class="timestamp" id="clock"></div>
 </div>
 
@@ -923,7 +930,13 @@ function connectSSE() {
   };
   es.addEventListener('session_start', () => clearConversation());
   es.addEventListener('user', e => { addMessage('user', JSON.parse(e.data).text); showThinking(); setStatus('thinking'); });
-  es.addEventListener('reply', e => { addMessage('kai', JSON.parse(e.data).text); setStatus('ready'); });
+  es.addEventListener('reply', e => {
+    const d = JSON.parse(e.data);
+    addMessage('kai', d.text);
+    setStatus('ready');
+    // Speak all replies in normal mode
+    speak(d.text);
+  });
   es.addEventListener('translation', e => { const d = JSON.parse(e.data); addMessage('translation', d.translation, d.detected_language); setStatus('ready'); });
   // Legacy overlay (kept for future use)
   es.addEventListener('call', e => { const d = JSON.parse(e.data); showCallOverlay(d.contact, d.app); setStatus('ready'); });
@@ -945,7 +958,13 @@ function connectSSE() {
     setTimeout(() => { window.location.href = urls[app] || urls.phone; }, 300);
   });
 
-  // Driving mode status
+  // Voice mode change from voice command
+  es.addEventListener('voice_mode', e => {
+    const d = JSON.parse(e.data);
+    setVoiceMode(d.mode);
+  });
+
+  // Driving mode and mode status updates
   es.addEventListener('status', e => {
     const d = JSON.parse(e.data);
     setStatus(d.state);
@@ -1093,6 +1112,7 @@ function connectSSE() {
     msg.innerHTML = '<div class="message-label" style="color:rgba(255,200,100,0.8)">💡 COACH</div>' +
       '<div class="bubble" style="border-color:rgba(255,200,100,0.3);font-style:italic">' + esc(d.tip) + '</div>';
     conv.appendChild(msg); scrollBottom();
+    speak(d.tip, { alert: true }); // coach tips speak in normal + whisper
   });
   // Song identification
   es.addEventListener('song_identify', e => {
@@ -1213,10 +1233,126 @@ function connectSSE() {
     msg.innerHTML = '<div class="message-label" style="color:rgba(255,80,80,0.9)">⚠️ VISION ALERT</div>' +
       '<div class="bubble" style="border-color:rgba(255,80,80,0.4);background:rgba(255,80,80,0.05);color:#ffd0d0">' + esc(d.result) + '</div>';
     conv.appendChild(msg); scrollBottom();
+    speak(d.result, { alert: true }); // speaks in normal + whisper
   });
 }
 connectSSE();
-// ── Reminders UI ───────────────────────────────────────────────────────────
+// ── Voice Mode ─────────────────────────────────────────────────────────────
+// Modes: 'normal' | 'whisper' | 'silent'
+let voiceMode = 'normal';
+
+const VOICE_MODES = ['normal', 'whisper', 'silent'];
+const VOICE_LABELS = { normal: '🔊 VOICE', whisper: '🤫 WHISPER', silent: '🔇 SILENT' };
+const VOICE_COLORS = { normal: 'rgba(165,214,167,0.8)', whisper: 'rgba(255,200,100,0.8)', silent: 'rgba(255,80,80,0.8)' };
+
+function cycleVoiceMode() {
+  const idx = VOICE_MODES.indexOf(voiceMode);
+  voiceMode = VOICE_MODES[(idx + 1) % VOICE_MODES.length];
+  updateVoicePill();
+  // Stop any current speech
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+}
+
+function setVoiceMode(mode) {
+  voiceMode = mode;
+  updateVoicePill();
+  if (mode !== 'normal') window.speechSynthesis && window.speechSynthesis.cancel();
+}
+
+function updateVoicePill() {
+  const pill = document.getElementById('voicePill');
+  if (!pill) return;
+  pill.textContent = VOICE_LABELS[voiceMode];
+  pill.style.color = VOICE_COLORS[voiceMode];
+  pill.style.borderColor = VOICE_COLORS[voiceMode].replace('0.8', '0.5');
+  pill.style.opacity = voiceMode === 'silent' ? '0.6' : '1';
+}
+
+/**
+ * speak(text, options)
+ * options.force = true -- speaks even in silent mode (for critical alerts)
+ * options.alert = true -- speaks in whisper mode too (alerts + coaching)
+ */
+function speak(text, options) {
+  options = options || {};
+  if (!text) return;
+  if (voiceMode === 'silent' && !options.force) return;
+  if (voiceMode === 'whisper' && !options.alert && !options.force) return;
+
+  // Cancel any current speech
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.volume = voiceMode === 'whisper' ? 0.3 : 1.0;
+  utter.rate = voiceMode === 'whisper' ? 0.9 : 1.0;
+
+  // Try to match language from text
+  var langMap = {
+    es: /[áéíóúñ¿¡]/,
+    fr: /[àâæçèêëîïôùûüœ]/,
+    pt: /[ãõçàáâêéíóôú]/,
+    de: /[äöüß]/,
+  };
+  var langKeys = Object.keys(langMap);
+  for (var i = 0; i < langKeys.length; i++) {
+    var langCode2 = langKeys[i];
+    if (langMap[langCode2].test(text)) { utter.lang = langCode2; break; }
+  }
+
+  window.speechSynthesis.speak(utter);
+}
+
+// ── Zoom ──────────────────────────────────────────────────────────────────
+let currentZoom = 1.0;
+const MIN_ZOOM = 1.0;
+const MAX_ZOOM = 5.0;
+
+function adjustZoom(delta) {
+  currentZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, currentZoom + delta));
+  applyZoom();
+}
+
+function resetZoom() {
+  currentZoom = 1.0;
+  applyZoom();
+}
+
+function applyZoom() {
+  const video = document.getElementById('cameraVideo');
+  if (video) {
+    video.style.transform = 'scale(' + currentZoom + ')';
+    video.style.transformOrigin = 'center center';
+  }
+  const label = document.getElementById('zoomLabel');
+  if (label) label.textContent = currentZoom.toFixed(1) + '\u00d7';
+}
+
+// ── Pinch-to-zoom ─────────────────────────────────────────────────────────
+let pinchStartDist = 0;
+let pinchStartZoom = 1.0;
+
+function getPinchDist(e) {
+  const dx = e.touches[0].clientX - e.touches[1].clientX;
+  const dy = e.touches[0].clientY - e.touches[1].clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+document.addEventListener('touchstart', function(e) {
+  if (e.touches.length === 2) {
+    pinchStartDist = getPinchDist(e);
+    pinchStartZoom = currentZoom;
+  }
+}, { passive: true });
+
+document.addEventListener('touchmove', function(e) {
+  if (e.touches.length === 2) {
+    const dist = getPinchDist(e);
+    const scale = dist / pinchStartDist;
+    currentZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, pinchStartZoom * scale));
+    applyZoom();
+  }
+}, { passive: true });
+
 async function loadReminders() {
   const list = document.getElementById('remindersList');
   list.innerHTML = '<div style="color:rgba(240,224,208,0.4);font-family:\'Share Tech Mono\',monospace;font-size:0.7em">Loading...</div>';
@@ -1409,6 +1545,9 @@ async function startDrivingVision() {
         conv.appendChild(alert);
         conv.scrollTop = conv.scrollHeight;
 
+        // Driving alerts ALWAYS speak — even in silent mode (safety critical)
+        speak(data.result, { force: true });
+
         // Auto-switch to chat tab so alert is visible
         if (document.getElementById('panel-chat').classList.contains('active') === false) {
           switchTab('chat');
@@ -1481,6 +1620,7 @@ function startProactiveMonitor() {
           '<div class="bubble" style="border-color:rgba(255,80,80,0.4);background:rgba(255,80,80,0.05)">' + esc(data.result) + '</div>';
         conv.appendChild(msg);
         conv.scrollTop = conv.scrollHeight;
+        speak(data.result, { alert: true }); // proactive alerts speak in normal + whisper
       }
     } catch(e) {}
   }, 30000);
