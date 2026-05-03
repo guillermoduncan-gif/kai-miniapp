@@ -968,6 +968,8 @@ function connectSSE() {
 
   // Voice mode change from voice command
   es.addEventListener('voice_mode', e => {
+    // voice mode changes are handled client-side via cycleVoiceMode()
+  });
 
   // Driving mode and mode status updates
   es.addEventListener('status', e => {
@@ -1010,6 +1012,8 @@ function connectSSE() {
       }
     }
   });
+  }); // end status listener
+
   es.addEventListener('incoming_call', e => {
     const d = JSON.parse(e.data);
     hideEmpty(); removeThinking();
